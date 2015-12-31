@@ -1,0 +1,40 @@
+ANSIBLE_GROUPS = {
+  "znodes" => ["znode2", "znode3", "znode1"],
+  "all_groups:children" => ["znodes"]
+}
+
+
+Vagrant.configure(2) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    config.vm.provider "virtualbox" do |v|
+        v.memory = 1024 
+    end
+    config.vm.define "znode1" do |znode1|
+        znode1.vm.network "private_network", ip: "192.168.33.10"
+        znode1.vm.hostname = "znode1"
+        znode1.vm.provision "ansible" do |ansible|
+            ansible.playbook = "playbook.yml"
+            ansible.groups = ANSIBLE_GROUPS
+        end
+    end
+
+    config.vm.define "znode2" do |znode2|
+        znode2.vm.network "private_network", ip: "192.168.33.11"
+        znode2.vm.hostname = "znode2"
+        znode2.vm.provision "ansible" do |ansible|
+            ansible.playbook = "playbook.yml"
+            ansible.groups = ANSIBLE_GROUPS
+        end
+    end
+
+
+    config.vm.define "znode3" do |znode3|
+        znode3.vm.network "private_network", ip: "192.168.33.12"
+        znode3.vm.hostname = "znode3"
+        znode3.vm.provision "ansible" do |ansible|
+            ansible.playbook = "playbook.yml"
+            ansible.groups = ANSIBLE_GROUPS
+        end
+    end
+
+end

@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+	targetNamespace="http://www.asterdata.com/apps" xmlns="http://www.asterdata.com/apps" xmlns:ns="http://www.asterdata.com/apps"
+	elementFormDefault="qualified">
+	<xs:element name="app">
+		<xs:complexType>
+			<xs:all>
+				<xs:element ref="name" />
+				<xs:element ref="version" />
+				<xs:element ref="developed-by" />
+				<xs:element ref="developer-id" minOccurs="1" maxOccurs="1" />
+				<xs:element ref="built-with-SDK-version" />
+				<xs:element ref="description" minOccurs="0" />
+				<xs:element ref="input-tables" minOccurs="0" />
+				<xs:element ref="output-tables" minOccurs="0" />
+				<xs:element ref="parameters" minOccurs="0" />
+				<xs:element ref="constants" minOccurs="0" />
+				<xs:element ref="dependencies" minOccurs="0" />
+				<xs:element ref="logic" minOccurs="1" maxOccurs="1" />
+			</xs:all>
+		</xs:complexType>
+		<xs:unique name="unique-table-name">
+			<xs:selector xpath=".//ns:table" />
+			<xs:field xpath="@name" />
+		</xs:unique>
+	</xs:element>
+	<xs:element name="version" type="xs:string" />
+	<xs:element name="developed-by" type="xs:string" />
+	<xs:element name="developer-id" type="xs:string" />
+	<xs:element name="built-with-SDK-version" type="xs:string" />
+	<xs:element name="app-class" type="xs:string" />
+   <xs:element name="reference" type="xs:string" />
+	<xs:element name="logic">
+		<xs:complexType>
+			<xs:all>
+				<xs:element minOccurs="0" ref="app-class" />
+				<xs:element minOccurs="0" ref="queries" />
+            <xs:element minOccurs="0" ref="reference"/>
+			</xs:all>
+			<xs:attribute name="type" type="logicType" />
+		</xs:complexType>
+	</xs:element>
+	<xs:simpleType name="logicType">
+		<xs:restriction base="xs:string">
+			<xs:enumeration value="JAVA" />
+			<xs:enumeration value="SQL" />
+         <xs:enumeration value="URL" />
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:element name="queries">
+		<xs:complexType>
+			<xs:group ref="custGroup" maxOccurs="unbounded" />
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="input-tables">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" name="table">
+					<xs:complexType>
+						<xs:all>
+							<xs:element minOccurs="0" ref="description" />
+							<xs:element name="columns">
+								<xs:complexType>
+									<xs:sequence>
+										<xs:element minOccurs="0" maxOccurs="unbounded" name="column">
+											<xs:complexType>
+												<xs:attribute name="description" type="xs:string" />
+												<xs:attribute name="name" use="required" />
+												<xs:attribute name="optional" type="xs:boolean" />
+												<xs:attribute name="type" use="required" type="xs:string"/>
+											</xs:complexType>
+										</xs:element>
+									</xs:sequence>
+								</xs:complexType>
+							</xs:element>
+						</xs:all>
+						<xs:attribute name="name" use="required" type="xs:string" />
+						<xs:attribute name="optional" type="xs:boolean" />
+					</xs:complexType>
+				</xs:element>
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:simpleType name="data-types-and-any">
+		<xs:union memberTypes="any data-types"/>
+	</xs:simpleType>
+	<xs:simpleType name="any">
+		<xs:restriction base="xs:string">
+			<xs:enumeration value="any" />
+		</xs:restriction>	
+	</xs:simpleType>
+	<xs:simpleType name="data-types">
+		<xs:restriction base="xs:string">
+			<xs:enumeration value="bit" />
+			<xs:enumeration value="bytea" />
+			<xs:enumeration value="numeric" />
+			<xs:enumeration value="serial local" />
+			<xs:enumeration value="bigserial local" />
+			<xs:enumeration value="int" />
+			<xs:enumeration value="integer" />
+			<xs:enumeration value="smallint" />
+			<xs:enumeration value="bigint" />
+			<xs:enumeration value="double" />
+			<xs:enumeration value="double precision" />
+			<xs:enumeration value="real" />
+			<xs:enumeration value="date" />
+			<xs:enumeration value="timestamp with time zone" />
+			<xs:enumeration value="timestamp without time zone" />
+			<xs:enumeration value="char" />
+			<xs:enumeration value="character" />
+			<xs:enumeration value="varchar" />
+			<xs:enumeration value="character varying" />
+			<xs:enumeration value="text" />
+			<xs:enumeration value="uuid" />
+         		<xs:enumeration value="ip4" />
+         		<xs:enumeration value="ip4range" />
+		        <xs:enumeration value="interval" />
+         		<xs:enumeration value="boolean" />
+         		<xs:enumeration value="bool" />
+			<xs:enumeration value="varbit" />
+                      	<xs:enumeration value="bit varying" />
+                      	<xs:enumeration value="smallint" />
+                      	<xs:enumeration value="float" />
+                      	<xs:enumeration value="float8" />
+                      	<xs:enumeration value="time" />
+                      	<xs:enumeration value="timestamp" />
+                      	<xs:enumeration value="time with time zone" />
+                      	<xs:enumeration value="time without time zone" />
+                      	<xs:enumeration value="timetz" />
+                      	<xs:enumeration value="timestamptz" />
+                      	<xs:enumeration value="int2" />
+                       	<xs:enumeration value="int4" />
+                       	<xs:enumeration value="int8" />
+			<xs:enumeration value="decimal" />
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:element name="output-tables">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" name="table">
+					<xs:complexType>
+						<xs:all>
+							<xs:element minOccurs="0" ref="description" />
+							<xs:element name="columns">
+								<xs:complexType>
+									<xs:sequence>
+										<xs:element minOccurs="0" maxOccurs="unbounded" name="column">
+											<xs:complexType>
+												<xs:attribute name="description" type="xs:string" />
+												<xs:attribute name="name" use="required" />
+												<xs:attribute name="type" use="required" type="data-types"/>
+											</xs:complexType>
+										</xs:element>
+									</xs:sequence>
+								</xs:complexType>
+							</xs:element>
+						</xs:all>
+						<xs:attribute name="distributionKey" type="xs:string"
+							use="required" />
+						<xs:attribute name="id-column" type="xs:string" />
+						<xs:attribute name="name" use="required" type="xs:string" />
+						<xs:attribute name="optional" type="xs:boolean" />
+						<xs:attribute name="output-column" type="xs:string" />
+					</xs:complexType>
+				</xs:element>
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="parameters">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" ref="parameter" />
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="parameter">
+		<xs:annotation>
+			<xs:documentation><![CDATA[
+	Parameter is a user input control specification which will be used for running new app jobs. There is a set of
+	different controls supported so each parameter should specify it's type via type property.
+					]]></xs:documentation>
+		</xs:annotation>
+		<xs:complexType>
+			<xs:all>
+				<xs:element minOccurs="0" ref="name" />
+				<xs:element minOccurs="0" ref="type" />
+				<xs:element minOccurs="0" ref="label" />
+				<xs:element minOccurs="0" ref="min" />
+				<xs:element minOccurs="0" ref="max" />
+				<xs:element minOccurs="0" ref="increment" />
+				<xs:element minOccurs="0" ref="default" />
+				<xs:element minOccurs="0" ref="description" />
+				<xs:element minOccurs="0" ref="requires_input_column" />
+				<xs:element minOccurs="0" ref="tab" />
+            <xs:element minOccurs="0" ref="filters" />
+				<xs:element ref="wrapper" minOccurs="0" />
+			</xs:all>
+			<xs:attribute name="optional" type="xs:boolean" />
+         <xs:attribute name="multiple" type="xs:boolean" />
+         <xs:attribute name="allows-input" type="xs:boolean" />
+         <xs:attribute name="enable-all" type="xs:boolean" />
+			<xs:attribute name="type" type="parameter" />
+			<xs:attribute name="name" type="xs:string" />
+			<xs:attribute name="label" type="xs:string" />
+			<xs:attribute name="tab" type="xs:string" />
+			<xs:attribute name="description" type="xs:string" />
+			<xs:attribute name="default" type="xs:string" />
+			<xs:attribute name="increment" type="xs:string" />
+			<xs:attribute name="min" type="xs:string" />
+			<xs:attribute name="max" type="xs:string" />
+			<xs:attribute name="requires_input_column" type="xs:string" />
+			<xs:attribute name="data-source" type="xs:string" />
+			<xs:attribute name="parent" type="xs:string" />
+         <xs:attribute name="format" type="xs:string" />
+         <xs:attribute name="filters" type="xs:string" />
+         <xs:attribute name="size" type="xs:string" />
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="wrapper" abstract="true">
+	</xs:element>
+	<xs:element name="type" type="parameter"></xs:element>
+	<xs:simpleType name="parameter">
+		<xs:restriction base="xs:string">
+			<xs:enumeration value="Text" />
+         <xs:enumeration value="Text area" />
+         <xs:enumeration value="Password" />
+			<xs:enumeration value="Number" />
+			<xs:enumeration value="Date" />
+			<xs:enumeration value="Checkbox" />
+			<xs:enumeration value="Range" />
+			<xs:enumeration value="Label" />
+			<xs:enumeration value="Menu" />
+         <xs:enumeration value="Date look back" />
+         <xs:enumeration value="Input tables selector" />
+			<xs:enumeration value="Table column selector" />
+			<xs:enumeration value="Column values selector" />
+         <xs:enumeration value="Subselect" />
+         <xs:enumeration value="Upload" />
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:element name="label" type="xs:string" />
+	<xs:element name="min" type="xs:string" />
+	<xs:element name="max" type="xs:string" />
+	<xs:element name="increment" type="xs:string" />
+	<xs:element name="default" type="xs:string" />
+	<xs:element name="tab" type="xs:string" />
+   <xs:element name="filters" type="xs:string" />
+	<xs:element name="data-source" type="xs:string"
+		substitutionGroup="wrapper" />
+	<xs:element name="parent" type="xs:string"
+		substitutionGroup="wrapper" />
+	<xs:element name="options" substitutionGroup="wrapper">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" ref="option" />
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="option">
+		<xs:complexType>
+			<xs:attribute name="label" use="required" type="xs:string" />
+			<xs:attribute name="value" use="required" type="xs:string" />
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="requires_input_column" type="xs:string" />
+	<xs:element name="name" type="xs:string" />
+	<xs:element name="description" type="xs:string" />
+	<xs:group name="custGroup">
+		<xs:sequence>
+			<xs:element minOccurs="0" maxOccurs="1" ref="transaction" />
+			<xs:element minOccurs="0" maxOccurs="1" ref="query" />
+			<xs:element minOccurs="0" maxOccurs="1" ref="execute-sql-file" />
+		</xs:sequence>
+	</xs:group>
+	<xs:element name="transaction">
+		<xs:complexType>
+			<xs:group ref="custTransGroup" minOccurs="1" maxOccurs="unbounded" />
+		</xs:complexType>
+	</xs:element>
+	<xs:group name="custTransGroup">
+		<xs:sequence>
+			<xs:element minOccurs="0" maxOccurs="1" ref="query" />
+			<xs:element minOccurs="0" maxOccurs="1" ref="execute-sql-file" />
+		</xs:sequence>
+	</xs:group>
+	<xs:element name="query" type="xs:string" />
+	<xs:element name="execute-sql-file">
+		<xs:complexType>
+			<xs:attribute name="file" type="xs:string" />
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="constants">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" ref="constant" />
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="constant">
+		<xs:complexType>
+			<xs:attribute name="name" use="required" />
+			<xs:attribute name="type" use="required">
+				<xs:simpleType>
+					<xs:restriction base="xs:string">
+						<xs:enumeration value="String" />
+						<xs:enumeration value="Integer" />
+						<xs:enumeration value="Long" />
+						<xs:enumeration value="Float" />
+						<xs:enumeration value="Double" />
+					</xs:restriction>
+				</xs:simpleType>
+			</xs:attribute>
+			<xs:attribute name="label" type="xs:string" />
+			<xs:attribute name="optional" type="xs:boolean" />
+			<xs:attribute name="default" type="xs:string" />
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="dependencies">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element minOccurs="0" maxOccurs="unbounded" ref="sql-mr-function" />
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	<xs:element name="user-built" type="xs:boolean" />
+	<xs:element name="sql-mr-function">
+		<xs:complexType>
+			<xs:all>
+				<xs:element ref="name" />
+				<xs:element name="version" type="xs:string" />
+				<xs:element minOccurs="0" ref="developed-by" />
+				<xs:element minOccurs="0" ref="user-built" />
+			</xs:all>
+		</xs:complexType>
+	</xs:element>
+</xs:schema>

@@ -1,0 +1,19 @@
+---
+- hosts: znodes
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: install Zookeeper 
+        apt: name=zookeeper force=yes update_cache=yes
+      - name: install Zookeeper-daemon
+        apt: name=zookeeperd force=yes update_cache=yes
+      - name: update hosts file
+        template: src=./hosts.j2 dest=/etc/hosts
+      - name: update 
+        template: src=./zoo.cfg.j2 dest=/etc/zookeeper/conf/zoo.cfg
+      - name: id file 
+        vars:
+          znode_id: "{{ inventory_hostname | regex_replace ('znode', '') }}"
+        template: src=./myid.j2 dest=/etc/zookeeper/conf/myid
+

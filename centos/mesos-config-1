@@ -1,0 +1,28 @@
+{
+  "id": "apprunner",
+  "cpus": 0.5,
+  "mem": 64.0,
+  "instances": 1,
+  "constraints": [
+      ["hostname", "CLUSTER", "node1"]
+    ],
+  "container": {
+    "type": "DOCKER",
+    "docker": {
+      "image": "td-listener-dev-release.uda.teradata.com:5000/ap_apprunner",
+      "network": "BRIDGE",
+      "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 0,
+              "protocol": "tcp"
+            }
+    ]},
+    "volumes": [
+      {
+        "containerPath": "/data/appserver",
+        "hostPath": "/data/appserver",
+        "mode": "RW"
+      }
+    ]
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "id": "/",
+  "apps": [{
+    "id": "dns",
+    "cmd": "sudo /home/vagrant/go/src/github.com/mesosphere/mesos-dns/mesos-dns -v=1 -config=/home/vagrant/go/src/github.com/mesosphere/mesos-dns/config.json",
+    "cpus": 0.2,
+    "mem": 20.0,
+    "instances": 1,
+    "ports": [4000],
+    "constraints": [
+      ["hostname", "CLUSTER", "node1"]
+    ]
+  }],
+  "groups": [{
+    "id": "/database",
+    "dependencies": ["/dns"],
+    "apps": [{
+      "id": "/database/postgres",
+      "cpus": 0.2,
+      "mem": 128,
+      "instances": 1,
+      "container": {
+        "type": "DOCKER",
+        "docker": {
+          "image": "td-listener-dev-release.uda.teradata.com:5000/ap_postgres"
+        }
+      }
+    }]
+  }, {
+    "id": "/service",
+    "dependencies": ["/database"],
+    "apps": [{
+        "id": "/service/appcenter",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "constraints": [
+          ["hostname", "CLUSTER", "node1"]
+        ],
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_appcenter",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31511
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      },
+
+      {
+        "id": "/service/apprunner",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_apprunner",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31512
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/appmgmt",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_appmgmt",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31513
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/visualization",
+        "cpus": 0.5,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_visualization",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31514
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/catalogmgmt",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_catalogmgmt",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31515
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/backup",
+        "cpus": 0.5,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_backup",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31517
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/gsm",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_gsm",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31518
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }, {
+        "id": "/service/authentication",
+        "cpus": 0.2,
+        "mem": 512,
+        "instances": 1,
+        "container": {
+          "type": "DOCKER",
+          "docker": {
+            "image": "td-listener-dev-release.uda.teradata.com:5000/ap_authentication",
+            "network": "BRIDGE",
+            "portMappings": [{
+              "containerPort": 8080,
+              "hostPort": 31516
+            }]
+          },
+          "volumes": [{
+            "containerPath": "/data/appserver",
+            "hostPath": "/data/appserver",
+            "mode": "RW"
+          }]
+        }
+      }
+    ]
+  }]
+}

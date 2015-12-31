@@ -1,0 +1,20 @@
+ANSIBLE_GROUPS = {
+  "marathon" => ["marathon1"],
+  "all_groups:children" => ["marathon"]
+}
+
+
+Vagrant.configure(2) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    config.vm.provider "virtualbox" do |v|
+        v.memory = 1024 
+    end
+    config.vm.define "marathon1" do |marathon1|
+        marathon1.vm.network "private_network", ip: "192.168.33.17"
+        marathon1.vm.hostname = "marathon1"
+        marathon1.vm.provision "ansible" do |ansible|
+            ansible.playbook = "playbook.yml"
+            ansible.groups = ANSIBLE_GROUPS
+        end
+    end
+end

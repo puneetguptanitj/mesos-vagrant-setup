@@ -1,0 +1,4365 @@
+--
+-- PostgreSQL database cluster dump
+--
+
+-- Started on 2015-11-16 16:31:34 PST
+
+SET default_transaction_read_only = off;
+
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+
+--
+-- Roles
+--
+
+CREATE ROLE appserver;
+ALTER ROLE appserver WITH SUPERUSER INHERIT NOCREATEROLE NOCREATEDB LOGIN NOREPLICATION PASSWORD 'md58cad4b28f986c71cea67396aab94e254' VALID UNTIL 'infinity';
+CREATE ROLE postgres;
+ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION PASSWORD 'md53175bce1d3201d16594cebf9d7eb3f9d';
+
+
+
+
+
+
+--
+-- Database creation
+--
+
+CREATE DATABASE appserver WITH TEMPLATE = template0 OWNER = appserver;
+CREATE DATABASE "miniapp-test" WITH TEMPLATE = template0 OWNER = appserver;
+REVOKE ALL ON DATABASE template1 FROM PUBLIC;
+REVOKE ALL ON DATABASE template1 FROM postgres;
+GRANT ALL ON DATABASE template1 TO postgres;
+GRANT CONNECT ON DATABASE template1 TO PUBLIC;
+
+
+\connect appserver
+
+SET default_transaction_read_only = off;
+
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 9.2.10
+-- Dumped by pg_dump version 9.2.10
+-- Started on 2015-11-16 16:31:34 PST
+
+SET statement_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET client_min_messages = warning;
+
+--
+-- TOC entry 219 (class 3079 OID 11995)
+-- Name: plpgsql; Type: EXTENSION; Schema: -; Owner: 
+--
+
+CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
+
+
+--
+-- TOC entry 2493 (class 0 OID 0)
+-- Dependencies: 219
+-- Name: EXTENSION plpgsql; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
+
+
+SET search_path = public, pg_catalog;
+
+--
+-- TOC entry 232 (class 1255 OID 91703)
+-- Name: calculate_fts(bigint, bigint, character varying, character varying, character varying, timestamp without time zone); Type: FUNCTION; Schema: public; Owner: appserver
+--
+
+CREATE FUNCTION calculate_fts(new_job_id bigint, new_catalog_id bigint, new_tags character varying, new_meta character varying, new_title character varying, new_time_stamp timestamp without time zone) RETURNS tsvector
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+	result_title character varying;
+	data_owner character varying;
+	time_stamp timestamp without time zone;
+	result_vector tsvector;
+BEGIN
+	--identify result title by first checking into result title and then using job title if not specified
+	--identify owner first by checking for a job user and then looking into result catalog owner
+	IF new_job_id IS NOT NULL THEN
+		SELECT u.username, coalesce(new_title, j.title) into data_owner, result_title
+		FROM job AS j INNER JOIN "user" AS u ON (j.user_id=u.id)
+		WHERE j.id=new_job_id;
+	ELSE
+
+
+		result_title:=new_title;
+
+		IF new_catalog_id IS NOT NULL THEN
+			SELECT c.owner into data_owner
+			FROM "catalog" AS c
+			WHERE c.id=new_catalog_id;
+		END IF;
+	END IF;
+	RAISE NOTICE 'Result Title is %',result_title;
+	--update full text search vector with custom priorities for different fields
+	result_vector:=
+		setweight(to_tsvector('pg_catalog.english', coalesce(result_title,'')), 'A') ||
+		setweight(to_tsvector('pg_catalog.english', coalesce(data_owner,'')), 'B') ||
+		setweight(to_tsvector('pg_catalog.english', coalesce(new_tags,'')), 'B')
+		|| setweight(to_tsvector('pg_catalog.english',
+			coalesce(
+				to_char( --convert timestamp to string representation using the date format pattern
+					new_time_stamp
+					,'MON DD, YYYY HH12:MI AM' --ex.: Dec 12, 2013 10:55AM
+				)
+			,'')
+		), 'C'); --for example a lower priority for date matches
+	RETURN result_vector;
+END
+$$;
+
+
+ALTER FUNCTION public.calculate_fts(new_job_id bigint, new_catalog_id bigint, new_tags character varying, new_meta character varying, new_title character varying, new_time_stamp timestamp without time zone) OWNER TO appserver;
+
+--
+-- TOC entry 233 (class 1255 OID 91704)
+-- Name: result_fulltext_update(); Type: FUNCTION; Schema: public; Owner: appserver
+--
+
+CREATE FUNCTION result_fulltext_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+	new.fts:=calculate_fts(new.job_id, new.catalog, new.tags, new.metadata, new.title, new.time_stamp);
+	RETURN new;
+END
+$$;
+
+
+ALTER FUNCTION public.result_fulltext_update() OWNER TO appserver;
+
+--
+-- TOC entry 234 (class 1255 OID 91705)
+-- Name: update_fts(integer); Type: FUNCTION; Schema: public; Owner: appserver
+--
+
+CREATE FUNCTION update_fts(integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+	UPDATE result
+	SET fts=calculate_fts(job_id, catalog, tags, metadata, title, time_stamp)
+	WHERE id=$1;
+END
+$_$;
+
+
+ALTER FUNCTION public.update_fts(integer) OWNER TO appserver;
+
+SET default_tablespace = '';
+
+SET default_with_oids = false;
+
+--
+-- TOC entry 168 (class 1259 OID 91706)
+-- Name: app; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE app (
+    id integer NOT NULL,
+    name character varying,
+    input_tables character varying,
+    output_tables character varying,
+    class_name character varying NOT NULL,
+    jar_name character varying NOT NULL,
+    version character varying,
+    fw_version character varying,
+    report_parameters character varying,
+    drilldown_parameters character varying,
+    small_icon_name character varying,
+    large_icon_name character varying,
+    description character varying,
+    dev_name character varying,
+    dev_id character varying,
+    profile_id bigint,
+    status integer,
+    status_text character varying,
+    clone_name character varying,
+    dependencies character varying,
+    constants character varying,
+    viz_folders character varying,
+    publish boolean,
+    acl character varying,
+    queries character varying,
+    owner character varying,
+    app_type integer,
+    app_stats character varying,
+    url character varying
+);
+
+
+ALTER TABLE public.app OWNER TO appserver;
+
+--
+-- TOC entry 169 (class 1259 OID 91712)
+-- Name: app_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE app_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.app_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2494 (class 0 OID 0)
+-- Dependencies: 169
+-- Name: app_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE app_id_seq OWNED BY app.id;
+
+
+--
+-- TOC entry 170 (class 1259 OID 91714)
+-- Name: audit; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE audit (
+    id integer NOT NULL,
+    submit_timestamp timestamp without time zone NOT NULL,
+    user_id bigint NOT NULL,
+    miniapp_id bigint NOT NULL,
+    event_type integer NOT NULL,
+    additional_info character varying,
+    result_id bigint,
+    job_id bigint
+);
+
+
+ALTER TABLE public.audit OWNER TO appserver;
+
+--
+-- TOC entry 171 (class 1259 OID 91720)
+-- Name: audit_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.audit_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2495 (class 0 OID 0)
+-- Dependencies: 171
+-- Name: audit_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE audit_id_seq OWNED BY audit.id;
+
+
+--
+-- TOC entry 172 (class 1259 OID 91722)
+-- Name: catalog; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE catalog (
+    id integer NOT NULL,
+    name character varying,
+    profile_id bigint,
+    acl character varying,
+    owner character varying
+);
+
+
+ALTER TABLE public.catalog OWNER TO appserver;
+
+--
+-- TOC entry 173 (class 1259 OID 91728)
+-- Name: catalog_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE catalog_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.catalog_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 174 (class 1259 OID 91730)
+-- Name: collection; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE collection (
+    id integer NOT NULL,
+    name character varying,
+    user_id bigint
+);
+
+
+ALTER TABLE public.collection OWNER TO appserver;
+
+--
+-- TOC entry 175 (class 1259 OID 91736)
+-- Name: collection_app_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE collection_app_map (
+    collection_id bigint,
+    app_id bigint,
+    list_order integer
+);
+
+
+ALTER TABLE public.collection_app_map OWNER TO appserver;
+
+--
+-- TOC entry 176 (class 1259 OID 91739)
+-- Name: collection_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE collection_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.collection_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2496 (class 0 OID 0)
+-- Dependencies: 176
+-- Name: collection_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE collection_id_seq OWNED BY collection.id;
+
+
+--
+-- TOC entry 177 (class 1259 OID 91741)
+-- Name: configuration; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE configuration (
+    id integer NOT NULL,
+    key character varying,
+    value character varying,
+    name_space character varying
+);
+
+
+ALTER TABLE public.configuration OWNER TO appserver;
+
+--
+-- TOC entry 178 (class 1259 OID 91747)
+-- Name: configuration_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE configuration_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.configuration_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2497 (class 0 OID 0)
+-- Dependencies: 178
+-- Name: configuration_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE configuration_id_seq OWNED BY configuration.id;
+
+
+--
+-- TOC entry 179 (class 1259 OID 91749)
+-- Name: connection_profile; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE connection_profile (
+    id integer NOT NULL,
+    name character varying,
+    type character varying,
+    host character varying,
+    connection_params character varying,
+    owner character varying,
+    cp_stats character varying
+);
+
+
+ALTER TABLE public.connection_profile OWNER TO appserver;
+
+--
+-- TOC entry 180 (class 1259 OID 91755)
+-- Name: connection_profile_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE connection_profile_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.connection_profile_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2498 (class 0 OID 0)
+-- Dependencies: 180
+-- Name: connection_profile_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE connection_profile_id_seq OWNED BY connection_profile.id;
+
+
+--
+-- TOC entry 181 (class 1259 OID 91757)
+-- Name: drilldown_visualization; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE drilldown_visualization (
+    id integer NOT NULL,
+    create_time timestamp without time zone,
+    visualization_id bigint,
+    generator_params character varying,
+    drilldown_params character varying,
+    title character varying,
+    subtitle character varying,
+    visualization character varying,
+    visualization_format character varying
+);
+
+
+ALTER TABLE public.drilldown_visualization OWNER TO appserver;
+
+--
+-- TOC entry 182 (class 1259 OID 91763)
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE drilldown_visualization_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.drilldown_visualization_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2499 (class 0 OID 0)
+-- Dependencies: 182
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE drilldown_visualization_id_seq OWNED BY drilldown_visualization.id;
+
+
+--
+-- TOC entry 183 (class 1259 OID 91765)
+-- Name: job; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE job (
+    id integer NOT NULL,
+    title character varying,
+    tags character varying,
+    start_time timestamp without time zone NOT NULL,
+    end_time timestamp without time zone,
+    user_id bigint NOT NULL,
+    app_id bigint NOT NULL,
+    status integer NOT NULL,
+    status_text character varying,
+    params character varying,
+    stack_size integer,
+    job_uuid uuid,
+    schedule_id integer
+);
+
+
+ALTER TABLE public.job OWNER TO appserver;
+
+--
+-- TOC entry 184 (class 1259 OID 91771)
+-- Name: job_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE job_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.job_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2500 (class 0 OID 0)
+-- Dependencies: 184
+-- Name: job_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE job_id_seq OWNED BY job.id;
+
+
+--
+-- TOC entry 185 (class 1259 OID 91773)
+-- Name: job_record; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE job_record (
+    id integer NOT NULL,
+    job_id bigint NOT NULL,
+    name character varying,
+    type integer NOT NULL,
+    status integer NOT NULL,
+    created timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public.job_record OWNER TO appserver;
+
+--
+-- TOC entry 186 (class 1259 OID 91779)
+-- Name: job_record_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE job_record_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.job_record_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2501 (class 0 OID 0)
+-- Dependencies: 186
+-- Name: job_record_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE job_record_id_seq OWNED BY job_record.id;
+
+
+--
+-- TOC entry 187 (class 1259 OID 91781)
+-- Name: library; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE library (
+    id integer NOT NULL,
+    user_id bigint,
+    name character varying
+);
+
+
+ALTER TABLE public.library OWNER TO appserver;
+
+--
+-- TOC entry 188 (class 1259 OID 91787)
+-- Name: library_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE library_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.library_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2502 (class 0 OID 0)
+-- Dependencies: 188
+-- Name: library_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE library_id_seq OWNED BY library.id;
+
+
+--
+-- TOC entry 189 (class 1259 OID 91789)
+-- Name: library_visualization_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE library_visualization_map (
+    library_id bigint,
+    visualization_id bigint,
+    list_order integer
+);
+
+
+ALTER TABLE public.library_visualization_map OWNER TO appserver;
+
+--
+-- TOC entry 190 (class 1259 OID 91792)
+-- Name: privilege; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE privilege (
+    id bigint NOT NULL,
+    name character varying
+);
+
+
+ALTER TABLE public.privilege OWNER TO appserver;
+
+--
+-- TOC entry 191 (class 1259 OID 91798)
+-- Name: privilege_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE privilege_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.privilege_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2503 (class 0 OID 0)
+-- Dependencies: 191
+-- Name: privilege_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE privilege_id_seq OWNED BY privilege.id;
+
+
+--
+-- TOC entry 192 (class 1259 OID 91800)
+-- Name: result; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE result (
+    id integer NOT NULL,
+    viz_id bigint,
+    data character varying,
+    job_id bigint,
+    tags character varying,
+    result_type integer,
+    metadata character varying,
+    catalog bigint,
+    asterlens_category character varying,
+    acl character varying,
+    title character varying,
+    time_stamp timestamp without time zone,
+    connection_profile bigint,
+    fts tsvector,
+    favorites character varying
+);
+
+
+ALTER TABLE public.result OWNER TO appserver;
+
+--
+-- TOC entry 193 (class 1259 OID 91806)
+-- Name: result_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE result_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.result_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2504 (class 0 OID 0)
+-- Dependencies: 193
+-- Name: result_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE result_id_seq OWNED BY result.id;
+
+
+--
+-- TOC entry 194 (class 1259 OID 91808)
+-- Name: role; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE role (
+    id bigint NOT NULL,
+    name character varying
+);
+
+
+ALTER TABLE public.role OWNER TO appserver;
+
+--
+-- TOC entry 195 (class 1259 OID 91814)
+-- Name: role_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE role_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.role_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2505 (class 0 OID 0)
+-- Dependencies: 195
+-- Name: role_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE role_id_seq OWNED BY role.id;
+
+
+--
+-- TOC entry 196 (class 1259 OID 91816)
+-- Name: role_privilege_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE role_privilege_map (
+    role_id bigint,
+    privilege_id bigint
+);
+
+
+ALTER TABLE public.role_privilege_map OWNER TO appserver;
+
+--
+-- TOC entry 197 (class 1259 OID 91819)
+-- Name: schedule; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule (
+    id integer NOT NULL,
+    status character varying,
+    app_id integer,
+    user_id bigint,
+    jobform character varying,
+    scheduleform character varying,
+    enabled boolean
+);
+
+
+ALTER TABLE public.schedule OWNER TO appserver;
+
+--
+-- TOC entry 198 (class 1259 OID 91825)
+-- Name: schedule_fired_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_fired_triggers (
+    sched_name character varying(120) NOT NULL,
+    entry_id character varying(95) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    instance_name character varying(200) NOT NULL,
+    fired_time bigint NOT NULL,
+    sched_time bigint NOT NULL,
+    priority integer NOT NULL,
+    state character varying(16) NOT NULL,
+    job_name character varying(200),
+    job_group character varying(200),
+    is_nonconcurrent boolean,
+    requests_recovery boolean
+);
+
+
+ALTER TABLE public.schedule_fired_triggers OWNER TO appserver;
+
+--
+-- TOC entry 199 (class 1259 OID 91831)
+-- Name: schedule_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE schedule_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.schedule_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2506 (class 0 OID 0)
+-- Dependencies: 199
+-- Name: schedule_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE schedule_id_seq OWNED BY schedule.id;
+
+
+--
+-- TOC entry 200 (class 1259 OID 91833)
+-- Name: schedule_job_details; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_job_details (
+    sched_name character varying(120) NOT NULL,
+    job_name character varying(200) NOT NULL,
+    job_group character varying(200) NOT NULL,
+    description character varying(250),
+    job_class_name character varying(250) NOT NULL,
+    is_durable boolean NOT NULL,
+    is_nonconcurrent boolean NOT NULL,
+    is_update_data boolean NOT NULL,
+    requests_recovery boolean NOT NULL,
+    job_data bytea
+);
+
+
+ALTER TABLE public.schedule_job_details OWNER TO appserver;
+
+--
+-- TOC entry 201 (class 1259 OID 91839)
+-- Name: schedule_paused_trigger_grps; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_paused_trigger_grps (
+    sched_name character varying(120) NOT NULL,
+    trigger_group character varying(200) NOT NULL
+);
+
+
+ALTER TABLE public.schedule_paused_trigger_grps OWNER TO appserver;
+
+--
+-- TOC entry 202 (class 1259 OID 91842)
+-- Name: schedule_simple_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_simple_triggers (
+    sched_name character varying(120) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    repeat_count bigint NOT NULL,
+    repeat_interval bigint NOT NULL,
+    times_triggered bigint NOT NULL
+);
+
+
+ALTER TABLE public.schedule_simple_triggers OWNER TO appserver;
+
+--
+-- TOC entry 203 (class 1259 OID 91848)
+-- Name: schedule_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_triggers (
+    sched_name character varying(120) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    job_name character varying(200) NOT NULL,
+    job_group character varying(200) NOT NULL,
+    description character varying(250),
+    next_fire_time bigint,
+    prev_fire_time bigint,
+    priority integer,
+    trigger_state character varying(16) NOT NULL,
+    trigger_type character varying(8) NOT NULL,
+    start_time bigint NOT NULL,
+    end_time bigint,
+    calendar_name character varying(200),
+    misfire_instr smallint,
+    job_data bytea
+);
+
+
+ALTER TABLE public.schedule_triggers OWNER TO appserver;
+
+--
+-- TOC entry 204 (class 1259 OID 91854)
+-- Name: search; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE search (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    text character varying,
+    created timestamp without time zone,
+    results bigint
+);
+
+
+ALTER TABLE public.search OWNER TO appserver;
+
+--
+-- TOC entry 205 (class 1259 OID 91860)
+-- Name: search_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE search_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.search_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2507 (class 0 OID 0)
+-- Dependencies: 205
+-- Name: search_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE search_id_seq OWNED BY search.id;
+
+
+--
+-- TOC entry 206 (class 1259 OID 91862)
+-- Name: search_result; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE search_result (
+    id bigint NOT NULL,
+    search_id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    rank double precision
+);
+
+
+ALTER TABLE public.search_result OWNER TO appserver;
+
+--
+-- TOC entry 207 (class 1259 OID 91865)
+-- Name: search_result_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE search_result_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.search_result_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2508 (class 0 OID 0)
+-- Dependencies: 207
+-- Name: search_result_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE search_result_id_seq OWNED BY search_result.id;
+
+
+--
+-- TOC entry 208 (class 1259 OID 91867)
+-- Name: table_filter; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE table_filter (
+    id integer NOT NULL,
+    user_id bigint NOT NULL,
+    table_name character varying NOT NULL,
+    title character varying,
+    acl character varying,
+    filters character varying
+);
+
+
+ALTER TABLE public.table_filter OWNER TO appserver;
+
+--
+-- TOC entry 209 (class 1259 OID 91873)
+-- Name: table_filter_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE table_filter_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.table_filter_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2509 (class 0 OID 0)
+-- Dependencies: 209
+-- Name: table_filter_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE table_filter_id_seq OWNED BY table_filter.id;
+
+
+--
+-- TOC entry 210 (class 1259 OID 91875)
+-- Name: user; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE "user" (
+    id integer NOT NULL,
+    username character varying,
+    enabled boolean,
+    last_login timestamp without time zone,
+    user_type integer,
+    shared_results character varying,
+    viewed_results character varying,
+    recently_viewed_results character varying,
+    recently_viewed_apps character varying,
+    my_apps_order character varying
+);
+
+
+ALTER TABLE public."user" OWNER TO appserver;
+
+--
+-- TOC entry 211 (class 1259 OID 91881)
+-- Name: user_app_acl; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_app_acl (
+    id integer NOT NULL,
+    user_id integer,
+    app_id integer,
+    acl character varying
+);
+
+
+ALTER TABLE public.user_app_acl OWNER TO appserver;
+
+--
+-- TOC entry 212 (class 1259 OID 91887)
+-- Name: user_app_acl_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_app_acl_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_app_acl_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2510 (class 0 OID 0)
+-- Dependencies: 212
+-- Name: user_app_acl_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_app_acl_id_seq OWNED BY user_app_acl.id;
+
+
+--
+-- TOC entry 213 (class 1259 OID 91889)
+-- Name: user_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2511 (class 0 OID 0)
+-- Dependencies: 213
+-- Name: user_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_id_seq OWNED BY "user".id;
+
+
+--
+-- TOC entry 214 (class 1259 OID 91891)
+-- Name: user_result_preference; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_result_preference (
+    id integer NOT NULL,
+    user_id integer,
+    result_id integer,
+    flag integer
+);
+
+
+ALTER TABLE public.user_result_preference OWNER TO appserver;
+
+--
+-- TOC entry 215 (class 1259 OID 91894)
+-- Name: user_result_preference_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_result_preference_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_result_preference_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2512 (class 0 OID 0)
+-- Dependencies: 215
+-- Name: user_result_preference_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_result_preference_id_seq OWNED BY user_result_preference.id;
+
+
+--
+-- TOC entry 216 (class 1259 OID 91896)
+-- Name: user_role_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_role_map (
+    role_id bigint,
+    user_id bigint
+);
+
+
+ALTER TABLE public.user_role_map OWNER TO appserver;
+
+--
+-- TOC entry 217 (class 1259 OID 91899)
+-- Name: visualization; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE visualization (
+    id integer NOT NULL,
+    result_id bigint,
+    aster_vis_table_name character varying,
+    aster_vis_id bigint
+);
+
+
+ALTER TABLE public.visualization OWNER TO appserver;
+
+--
+-- TOC entry 218 (class 1259 OID 91905)
+-- Name: visualization_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE visualization_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.visualization_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2513 (class 0 OID 0)
+-- Dependencies: 218
+-- Name: visualization_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE visualization_id_seq OWNED BY visualization.id;
+
+
+--
+-- TOC entry 2258 (class 2604 OID 91907)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY app ALTER COLUMN id SET DEFAULT nextval('app_id_seq'::regclass);
+
+
+--
+-- TOC entry 2259 (class 2604 OID 91908)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY collection ALTER COLUMN id SET DEFAULT nextval('collection_id_seq'::regclass);
+
+
+--
+-- TOC entry 2260 (class 2604 OID 91909)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY connection_profile ALTER COLUMN id SET DEFAULT nextval('connection_profile_id_seq'::regclass);
+
+
+--
+-- TOC entry 2261 (class 2604 OID 91910)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY library ALTER COLUMN id SET DEFAULT nextval('library_id_seq'::regclass);
+
+
+--
+-- TOC entry 2262 (class 2604 OID 91911)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY "user" ALTER COLUMN id SET DEFAULT nextval('user_id_seq'::regclass);
+
+
+--
+-- TOC entry 2263 (class 2604 OID 91912)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY user_app_acl ALTER COLUMN id SET DEFAULT nextval('user_app_acl_id_seq'::regclass);
+
+
+--
+-- TOC entry 2264 (class 2604 OID 91913)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY visualization ALTER COLUMN id SET DEFAULT nextval('visualization_id_seq'::regclass);
+
+
+--
+-- TOC entry 2437 (class 0 OID 91706)
+-- Dependencies: 168
+-- Data for Name: app; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY app (id, name, input_tables, output_tables, class_name, jar_name, version, fw_version, report_parameters, drilldown_parameters, small_icon_name, large_icon_name, description, dev_name, dev_id, profile_id, status, status_text, clone_name, dependencies, constants, viz_folders, publish, acl, queries, owner, app_type, app_stats, url) FROM stdin;
+10	select1	[]	[]	com.teradata.appcenter.appmgmt.genericapp.GenericApp	select1_10.jar	0.1	6.0.r44261	\N	\N	\N	\N	test	admin	test	1	2	\N	select1	[]	\N	\N	f	["all","admin"]	["select 1;","insert into app_center_visualizations (json) values (\\n'{\\n     \\"db_table_name\\":\\"\\",\\n     \\"vizType\\":\\"table\\",\\n     \\"version\\":\\"1.0\\",\\n     \\"where\\" : \\"\\",\\n     \\"title\\":\\"\\"\\n}');"]	["admin"]	0	{"installed":1446574644315,"upgraded":1446574980038,"runCount":2,"lastRun":1446575000298}	\N
+\.
+
+
+--
+-- TOC entry 2514 (class 0 OID 0)
+-- Dependencies: 169
+-- Name: app_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('app_id_seq', 10, true);
+
+
+--
+-- TOC entry 2439 (class 0 OID 91714)
+-- Dependencies: 170
+-- Data for Name: audit; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY audit (id, submit_timestamp, user_id, miniapp_id, event_type, additional_info, result_id, job_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2515 (class 0 OID 0)
+-- Dependencies: 171
+-- Name: audit_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('audit_id_seq', 1, false);
+
+
+--
+-- TOC entry 2441 (class 0 OID 91722)
+-- Dependencies: 172
+-- Data for Name: catalog; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY catalog (id, name, profile_id, acl, owner) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2516 (class 0 OID 0)
+-- Dependencies: 173
+-- Name: catalog_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('catalog_id_seq', 1, false);
+
+
+--
+-- TOC entry 2443 (class 0 OID 91730)
+-- Dependencies: 174
+-- Data for Name: collection; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY collection (id, name, user_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2444 (class 0 OID 91736)
+-- Dependencies: 175
+-- Data for Name: collection_app_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY collection_app_map (collection_id, app_id, list_order) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2517 (class 0 OID 0)
+-- Dependencies: 176
+-- Name: collection_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('collection_id_seq', 1, false);
+
+
+--
+-- TOC entry 2446 (class 0 OID 91741)
+-- Dependencies: 177
+-- Data for Name: configuration; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY configuration (id, key, value, name_space) FROM stdin;
+2	defaultProfile	1	\N
+11	defaultTheme	Light	\N
+12	devShareApps	false	\N
+1	adminPwd	22c17d5a3bf72b41b4c4ab1ae8e285c911b6ef054d72241aa9e9de670de01d78	\N
+10	authMode	BOTH	
+13	ldapAdminPwd	2d380abffd4e99334d2853d5ba244019dd639df46772ba3628f33cdc0f898729	ldap
+14	ldapServerURL	ldap://10.25.44.135:389/DC=maxcrc,DC=com	ldap
+15	ldapAdminUserDn	CN=Manager,DC=maxcrc,DC=com	ldap
+\.
+
+
+--
+-- TOC entry 2518 (class 0 OID 0)
+-- Dependencies: 178
+-- Name: configuration_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('configuration_id_seq', 12, true);
+
+
+--
+-- TOC entry 2448 (class 0 OID 91749)
+-- Dependencies: 179
+-- Data for Name: connection_profile; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY connection_profile (id, name, type, host, connection_params, owner, cp_stats) FROM stdin;
+1	test	Aster	10.80.144.120	{"userName":"db_superuser","poolLimit":"25","database":"beehive","schema":null,"password":"592b13dd5c0eeec8dd78dc689a4c6af425f200f2e5a73350818ba90f74d3ac19"}	admin	{"lastUsed":1446575012367}
+\.
+
+
+--
+-- TOC entry 2519 (class 0 OID 0)
+-- Dependencies: 180
+-- Name: connection_profile_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('connection_profile_id_seq', 1, true);
+
+
+--
+-- TOC entry 2450 (class 0 OID 91757)
+-- Dependencies: 181
+-- Data for Name: drilldown_visualization; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY drilldown_visualization (id, create_time, visualization_id, generator_params, drilldown_params, title, subtitle, visualization, visualization_format) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2520 (class 0 OID 0)
+-- Dependencies: 182
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('drilldown_visualization_id_seq', 1, false);
+
+
+--
+-- TOC entry 2452 (class 0 OID 91765)
+-- Dependencies: 183
+-- Data for Name: job; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY job (id, title, tags, start_time, end_time, user_id, app_id, status, status_text, params, stack_size, job_uuid, schedule_id) FROM stdin;
+1	test		2015-11-03 10:20:56.821	2015-11-03 10:22:28.107	13	10	1	\N	{}	0	d0a88ab6-b727-49af-a791-f0fc59a4ed13	\N
+2	test		2015-11-03 10:23:20.298	2015-11-03 10:23:33.474	13	10	1	\N	{}	1	19bfa32a-f7c3-40ee-8006-60f6b5b2a208	\N
+\.
+
+
+--
+-- TOC entry 2521 (class 0 OID 0)
+-- Dependencies: 184
+-- Name: job_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('job_id_seq', 2, true);
+
+
+--
+-- TOC entry 2454 (class 0 OID 91773)
+-- Dependencies: 185
+-- Data for Name: job_record; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY job_record (id, job_id, name, type, status, created) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2522 (class 0 OID 0)
+-- Dependencies: 186
+-- Name: job_record_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('job_record_id_seq', 1, false);
+
+
+--
+-- TOC entry 2456 (class 0 OID 91781)
+-- Dependencies: 187
+-- Data for Name: library; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY library (id, user_id, name) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2523 (class 0 OID 0)
+-- Dependencies: 188
+-- Name: library_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('library_id_seq', 1, false);
+
+
+--
+-- TOC entry 2458 (class 0 OID 91789)
+-- Dependencies: 189
+-- Data for Name: library_visualization_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY library_visualization_map (library_id, visualization_id, list_order) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2459 (class 0 OID 91792)
+-- Dependencies: 190
+-- Data for Name: privilege; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY privilege (id, name) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2524 (class 0 OID 0)
+-- Dependencies: 191
+-- Name: privilege_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('privilege_id_seq', 1, false);
+
+
+--
+-- TOC entry 2461 (class 0 OID 91800)
+-- Dependencies: 192
+-- Data for Name: result; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY result (id, viz_id, data, job_id, tags, result_type, metadata, catalog, asterlens_category, acl, title, time_stamp, connection_profile, fts, favorites) FROM stdin;
+1	1	{"outputTable":"\\"app_center_visualizations_1\\"","outputCol":"json","idCol":"id"}	2		0	{"id":1,"title":"","viz_type":"table","subtitle":null,"job_uuid":"19bfa32a-f7c3-40ee-8006-60f6b5b2a208"}	\N	\N	["admin"]		2015-11-03 10:23:30.717	1	'03':6C '10':8C '2015':7C '23':9C 'ldap':2B 'ldap-user2':1B 'nov':5C 'user2':3B,4B	\N
+\.
+
+
+--
+-- TOC entry 2525 (class 0 OID 0)
+-- Dependencies: 193
+-- Name: result_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('result_id_seq', 1, true);
+
+
+--
+-- TOC entry 2463 (class 0 OID 91808)
+-- Dependencies: 194
+-- Data for Name: role; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY role (id, name) FROM stdin;
+22	ROLE_USER
+23	ROLE_SETTINGS
+24	ROLE_ADMIN
+\.
+
+
+--
+-- TOC entry 2526 (class 0 OID 0)
+-- Dependencies: 195
+-- Name: role_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('role_id_seq', 24, true);
+
+
+--
+-- TOC entry 2465 (class 0 OID 91816)
+-- Dependencies: 196
+-- Data for Name: role_privilege_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY role_privilege_map (role_id, privilege_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2466 (class 0 OID 91819)
+-- Dependencies: 197
+-- Data for Name: schedule; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule (id, status, app_id, user_id, jobform, scheduleform, enabled) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2467 (class 0 OID 91825)
+-- Dependencies: 198
+-- Data for Name: schedule_fired_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_fired_triggers (sched_name, entry_id, trigger_name, trigger_group, instance_name, fired_time, sched_time, priority, state, job_name, job_group, is_nonconcurrent, requests_recovery) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2527 (class 0 OID 0)
+-- Dependencies: 199
+-- Name: schedule_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('schedule_id_seq', 1, false);
+
+
+--
+-- TOC entry 2469 (class 0 OID 91833)
+-- Dependencies: 200
+-- Data for Name: schedule_job_details; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_job_details (sched_name, job_name, job_group, description, job_class_name, is_durable, is_nonconcurrent, is_update_data, requests_recovery, job_data) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2470 (class 0 OID 91839)
+-- Dependencies: 201
+-- Data for Name: schedule_paused_trigger_grps; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_paused_trigger_grps (sched_name, trigger_group) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2471 (class 0 OID 91842)
+-- Dependencies: 202
+-- Data for Name: schedule_simple_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_simple_triggers (sched_name, trigger_name, trigger_group, repeat_count, repeat_interval, times_triggered) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2472 (class 0 OID 91848)
+-- Dependencies: 203
+-- Data for Name: schedule_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_triggers (sched_name, trigger_name, trigger_group, job_name, job_group, description, next_fire_time, prev_fire_time, priority, trigger_state, trigger_type, start_time, end_time, calendar_name, misfire_instr, job_data) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2473 (class 0 OID 91854)
+-- Dependencies: 204
+-- Data for Name: search; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY search (id, user_id, text, created, results) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2528 (class 0 OID 0)
+-- Dependencies: 205
+-- Name: search_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('search_id_seq', 1, false);
+
+
+--
+-- TOC entry 2475 (class 0 OID 91862)
+-- Dependencies: 206
+-- Data for Name: search_result; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY search_result (id, search_id, result_id, rank) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2529 (class 0 OID 0)
+-- Dependencies: 207
+-- Name: search_result_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('search_result_id_seq', 1, false);
+
+
+--
+-- TOC entry 2477 (class 0 OID 91867)
+-- Dependencies: 208
+-- Data for Name: table_filter; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY table_filter (id, user_id, table_name, title, acl, filters) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2530 (class 0 OID 0)
+-- Dependencies: 209
+-- Name: table_filter_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('table_filter_id_seq', 1, false);
+
+
+--
+-- TOC entry 2479 (class 0 OID 91875)
+-- Dependencies: 210
+-- Data for Name: user; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY "user" (id, username, enabled, last_login, user_type, shared_results, viewed_results, recently_viewed_results, recently_viewed_apps, my_apps_order) FROM stdin;
+10	LDAP-venkat | venkat | venkata.godi@teradata.com	t	2015-11-02 15:18:25.601	1	\N	\N	\N	\N	\N
+11	LDAP-mike | Mike	t	2015-11-02 15:18:38.139	1	\N	\N	\N	\N	\N
+12	LDAP-user1 | User1 | user1@teradata.com	t	2015-11-03 10:10:05.939	1	\N	\N	\N	\N	\N
+13	LDAP-user2 | User2	f	\N	\N	\N	\N	\N	[{"id":10,"timestamp":1446574997846}]	\N
+1	admin	f	2015-11-04 11:02:56.874	0	\N	\N	\N	[{"id":10,"timestamp":1446574714742}]	\N
+\.
+
+
+--
+-- TOC entry 2480 (class 0 OID 91881)
+-- Dependencies: 211
+-- Data for Name: user_app_acl; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_app_acl (id, user_id, app_id, acl) FROM stdin;
+10	1	10	["all","admin"]
+\.
+
+
+--
+-- TOC entry 2531 (class 0 OID 0)
+-- Dependencies: 212
+-- Name: user_app_acl_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_app_acl_id_seq', 10, true);
+
+
+--
+-- TOC entry 2532 (class 0 OID 0)
+-- Dependencies: 213
+-- Name: user_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_id_seq', 13, true);
+
+
+--
+-- TOC entry 2483 (class 0 OID 91891)
+-- Dependencies: 214
+-- Data for Name: user_result_preference; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_result_preference (id, user_id, result_id, flag) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2533 (class 0 OID 0)
+-- Dependencies: 215
+-- Name: user_result_preference_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_result_preference_id_seq', 10, false);
+
+
+--
+-- TOC entry 2485 (class 0 OID 91896)
+-- Dependencies: 216
+-- Data for Name: user_role_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_role_map (role_id, user_id) FROM stdin;
+23	1
+22	1
+24	1
+\.
+
+
+--
+-- TOC entry 2486 (class 0 OID 91899)
+-- Dependencies: 217
+-- Data for Name: visualization; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY visualization (id, result_id, aster_vis_table_name, aster_vis_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2534 (class 0 OID 0)
+-- Dependencies: 218
+-- Name: visualization_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('visualization_id_seq', 1, false);
+
+
+--
+-- TOC entry 2266 (class 2606 OID 91915)
+-- Name: app_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY app
+    ADD CONSTRAINT app_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2268 (class 2606 OID 91917)
+-- Name: audit_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY audit
+    ADD CONSTRAINT audit_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2270 (class 2606 OID 91919)
+-- Name: catalog_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY catalog
+    ADD CONSTRAINT catalog_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2272 (class 2606 OID 91921)
+-- Name: collection_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY collection
+    ADD CONSTRAINT collection_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2274 (class 2606 OID 91923)
+-- Name: configuration_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY configuration
+    ADD CONSTRAINT configuration_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2276 (class 2606 OID 91925)
+-- Name: connection_profile_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY connection_profile
+    ADD CONSTRAINT connection_profile_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2278 (class 2606 OID 91927)
+-- Name: drilldown_visualization_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY drilldown_visualization
+    ADD CONSTRAINT drilldown_visualization_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2280 (class 2606 OID 91929)
+-- Name: job_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY job
+    ADD CONSTRAINT job_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2282 (class 2606 OID 91931)
+-- Name: library_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY library
+    ADD CONSTRAINT library_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2284 (class 2606 OID 91933)
+-- Name: privilege_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY privilege
+    ADD CONSTRAINT privilege_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2287 (class 2606 OID 91935)
+-- Name: result_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY result
+    ADD CONSTRAINT result_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2289 (class 2606 OID 91937)
+-- Name: role_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY role
+    ADD CONSTRAINT role_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2299 (class 2606 OID 91939)
+-- Name: schedule_fired_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_fired_triggers
+    ADD CONSTRAINT schedule_fired_triggers_pkey PRIMARY KEY (sched_name, entry_id);
+
+
+--
+-- TOC entry 2303 (class 2606 OID 91941)
+-- Name: schedule_job_details_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_job_details
+    ADD CONSTRAINT schedule_job_details_pkey PRIMARY KEY (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2305 (class 2606 OID 91943)
+-- Name: schedule_paused_trigger_grps_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_paused_trigger_grps
+    ADD CONSTRAINT schedule_paused_trigger_grps_pkey PRIMARY KEY (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2291 (class 2606 OID 91945)
+-- Name: schedule_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule
+    ADD CONSTRAINT schedule_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2307 (class 2606 OID 91947)
+-- Name: schedule_simple_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_simple_triggers
+    ADD CONSTRAINT schedule_simple_triggers_pkey PRIMARY KEY (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2321 (class 2606 OID 91949)
+-- Name: schedule_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_triggers
+    ADD CONSTRAINT schedule_triggers_pkey PRIMARY KEY (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2325 (class 2606 OID 91951)
+-- Name: user_app_acl_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY user_app_acl
+    ADD CONSTRAINT user_app_acl_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2323 (class 2606 OID 91953)
+-- Name: user_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY "user"
+    ADD CONSTRAINT user_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2327 (class 2606 OID 91955)
+-- Name: visualization_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY visualization
+    ADD CONSTRAINT visualization_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2285 (class 1259 OID 91956)
+-- Name: fulltext_idx; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX fulltext_idx ON result USING gin (fts);
+
+
+--
+-- TOC entry 2292 (class 1259 OID 91957)
+-- Name: idx_schedule_ft_inst_job_req_rcvry; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_inst_job_req_rcvry ON schedule_fired_triggers USING btree (sched_name, instance_name, requests_recovery);
+
+
+--
+-- TOC entry 2293 (class 1259 OID 91958)
+-- Name: idx_schedule_ft_j_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_j_g ON schedule_fired_triggers USING btree (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2294 (class 1259 OID 91959)
+-- Name: idx_schedule_ft_jg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_jg ON schedule_fired_triggers USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2295 (class 1259 OID 91960)
+-- Name: idx_schedule_ft_t_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_t_g ON schedule_fired_triggers USING btree (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2296 (class 1259 OID 91961)
+-- Name: idx_schedule_ft_tg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_tg ON schedule_fired_triggers USING btree (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2297 (class 1259 OID 91962)
+-- Name: idx_schedule_ft_trig_inst_name; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_trig_inst_name ON schedule_fired_triggers USING btree (sched_name, instance_name);
+
+
+--
+-- TOC entry 2300 (class 1259 OID 91963)
+-- Name: idx_schedule_j_grp; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_j_grp ON schedule_job_details USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2301 (class 1259 OID 91964)
+-- Name: idx_schedule_j_req_recovery; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_j_req_recovery ON schedule_job_details USING btree (sched_name, requests_recovery);
+
+
+--
+-- TOC entry 2308 (class 1259 OID 91965)
+-- Name: idx_schedule_t_c; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_c ON schedule_triggers USING btree (sched_name, calendar_name);
+
+
+--
+-- TOC entry 2309 (class 1259 OID 91966)
+-- Name: idx_schedule_t_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_g ON schedule_triggers USING btree (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2310 (class 1259 OID 91967)
+-- Name: idx_schedule_t_j; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_j ON schedule_triggers USING btree (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2311 (class 1259 OID 91968)
+-- Name: idx_schedule_t_jg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_jg ON schedule_triggers USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2312 (class 1259 OID 91969)
+-- Name: idx_schedule_t_n_g_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_n_g_state ON schedule_triggers USING btree (sched_name, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2313 (class 1259 OID 91970)
+-- Name: idx_schedule_t_n_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_n_state ON schedule_triggers USING btree (sched_name, trigger_name, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2314 (class 1259 OID 91971)
+-- Name: idx_schedule_t_next_fire_time; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_next_fire_time ON schedule_triggers USING btree (sched_name, next_fire_time);
+
+
+--
+-- TOC entry 2315 (class 1259 OID 91972)
+-- Name: idx_schedule_t_nft_misfire; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_misfire ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time);
+
+
+--
+-- TOC entry 2316 (class 1259 OID 91973)
+-- Name: idx_schedule_t_nft_st; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st ON schedule_triggers USING btree (sched_name, trigger_state, next_fire_time);
+
+
+--
+-- TOC entry 2317 (class 1259 OID 91974)
+-- Name: idx_schedule_t_nft_st_misfire; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st_misfire ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time, trigger_state);
+
+
+--
+-- TOC entry 2318 (class 1259 OID 91975)
+-- Name: idx_schedule_t_nft_st_misfire_grp; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st_misfire_grp ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2319 (class 1259 OID 91976)
+-- Name: idx_schedule_t_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_state ON schedule_triggers USING btree (sched_name, trigger_state);
+
+
+--
+-- TOC entry 2330 (class 2620 OID 91977)
+-- Name: result_fts_update; Type: TRIGGER; Schema: public; Owner: appserver
+--
+
+CREATE TRIGGER result_fts_update BEFORE INSERT OR UPDATE ON result FOR EACH ROW EXECUTE PROCEDURE result_fulltext_update();
+
+
+--
+-- TOC entry 2328 (class 2606 OID 91978)
+-- Name: schedule_simple_triggers_sched_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY schedule_simple_triggers
+    ADD CONSTRAINT schedule_simple_triggers_sched_name_fkey FOREIGN KEY (sched_name, trigger_name, trigger_group) REFERENCES schedule_triggers(sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2329 (class 2606 OID 91983)
+-- Name: schedule_triggers_sched_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY schedule_triggers
+    ADD CONSTRAINT schedule_triggers_sched_name_fkey FOREIGN KEY (sched_name, job_name, job_group) REFERENCES schedule_job_details(sched_name, job_name, job_group);
+
+
+-- Completed on 2015-11-16 16:31:34 PST
+
+--
+-- PostgreSQL database dump complete
+--
+
+\connect "miniapp-test"
+
+SET default_transaction_read_only = off;
+
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 9.2.10
+-- Dumped by pg_dump version 9.2.10
+-- Started on 2015-11-16 16:31:34 PST
+
+SET statement_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET client_min_messages = warning;
+
+--
+-- TOC entry 219 (class 3079 OID 11995)
+-- Name: plpgsql; Type: EXTENSION; Schema: -; Owner: 
+--
+
+CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
+
+
+--
+-- TOC entry 2491 (class 0 OID 0)
+-- Dependencies: 219
+-- Name: EXTENSION plpgsql; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
+
+
+SET search_path = public, pg_catalog;
+
+SET default_tablespace = '';
+
+SET default_with_oids = false;
+
+--
+-- TOC entry 168 (class 1259 OID 92554)
+-- Name: app; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE app (
+    id integer NOT NULL,
+    name character varying,
+    input_tables character varying,
+    output_tables character varying,
+    class_name character varying NOT NULL,
+    jar_name character varying NOT NULL,
+    version character varying,
+    fw_version character varying,
+    report_parameters character varying,
+    drilldown_parameters character varying,
+    small_icon_name character varying,
+    large_icon_name character varying,
+    description character varying,
+    dev_name character varying,
+    dev_id character varying,
+    profile_id bigint,
+    status integer,
+    status_text character varying,
+    clone_name character varying,
+    dependencies character varying,
+    constants character varying,
+    viz_folders character varying,
+    publish boolean,
+    acl character varying,
+    queries character varying,
+    owner character varying,
+    app_type integer,
+    app_stats character varying,
+    url character varying
+);
+
+
+ALTER TABLE public.app OWNER TO appserver;
+
+--
+-- TOC entry 169 (class 1259 OID 92560)
+-- Name: app_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE app_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.app_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2492 (class 0 OID 0)
+-- Dependencies: 169
+-- Name: app_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE app_id_seq OWNED BY app.id;
+
+
+--
+-- TOC entry 174 (class 1259 OID 92578)
+-- Name: audit; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE audit (
+    id integer NOT NULL,
+    submit_timestamp timestamp without time zone NOT NULL,
+    user_id bigint NOT NULL,
+    miniapp_id bigint NOT NULL,
+    event_type integer NOT NULL,
+    additional_info character varying,
+    result_id bigint,
+    job_id bigint
+);
+
+
+ALTER TABLE public.audit OWNER TO appserver;
+
+--
+-- TOC entry 175 (class 1259 OID 92584)
+-- Name: audit_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.audit_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2493 (class 0 OID 0)
+-- Dependencies: 175
+-- Name: audit_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE audit_id_seq OWNED BY audit.id;
+
+
+--
+-- TOC entry 202 (class 1259 OID 92683)
+-- Name: catalog; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE catalog (
+    id integer NOT NULL,
+    name character varying,
+    profile_id bigint,
+    acl character varying,
+    owner character varying
+);
+
+
+ALTER TABLE public.catalog OWNER TO appserver;
+
+--
+-- TOC entry 203 (class 1259 OID 92689)
+-- Name: catalog_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE catalog_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.catalog_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 180 (class 1259 OID 92602)
+-- Name: collection; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE collection (
+    id integer NOT NULL,
+    name character varying,
+    user_id bigint
+);
+
+
+ALTER TABLE public.collection OWNER TO appserver;
+
+--
+-- TOC entry 181 (class 1259 OID 92608)
+-- Name: collection_app_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE collection_app_map (
+    collection_id bigint,
+    app_id bigint,
+    list_order integer
+);
+
+
+ALTER TABLE public.collection_app_map OWNER TO appserver;
+
+--
+-- TOC entry 182 (class 1259 OID 92611)
+-- Name: collection_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE collection_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.collection_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2494 (class 0 OID 0)
+-- Dependencies: 182
+-- Name: collection_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE collection_id_seq OWNED BY collection.id;
+
+
+--
+-- TOC entry 176 (class 1259 OID 92586)
+-- Name: configuration; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE configuration (
+    id integer NOT NULL,
+    key character varying,
+    value character varying,
+    name_space character varying
+);
+
+
+ALTER TABLE public.configuration OWNER TO appserver;
+
+--
+-- TOC entry 177 (class 1259 OID 92592)
+-- Name: configuration_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE configuration_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.configuration_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2495 (class 0 OID 0)
+-- Dependencies: 177
+-- Name: configuration_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE configuration_id_seq OWNED BY configuration.id;
+
+
+--
+-- TOC entry 183 (class 1259 OID 92613)
+-- Name: connection_profile; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE connection_profile (
+    id integer NOT NULL,
+    name character varying,
+    type character varying,
+    host character varying,
+    connection_params character varying,
+    owner character varying,
+    cp_stats character varying
+);
+
+
+ALTER TABLE public.connection_profile OWNER TO appserver;
+
+--
+-- TOC entry 184 (class 1259 OID 92619)
+-- Name: connection_profile_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE connection_profile_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.connection_profile_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2496 (class 0 OID 0)
+-- Dependencies: 184
+-- Name: connection_profile_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE connection_profile_id_seq OWNED BY connection_profile.id;
+
+
+--
+-- TOC entry 204 (class 1259 OID 92693)
+-- Name: drilldown_visualization; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE drilldown_visualization (
+    id integer NOT NULL,
+    create_time timestamp without time zone,
+    visualization_id bigint,
+    generator_params character varying,
+    drilldown_params character varying,
+    title character varying,
+    subtitle character varying,
+    visualization character varying,
+    visualization_format character varying
+);
+
+
+ALTER TABLE public.drilldown_visualization OWNER TO appserver;
+
+--
+-- TOC entry 212 (class 1259 OID 92756)
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE drilldown_visualization_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.drilldown_visualization_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2497 (class 0 OID 0)
+-- Dependencies: 212
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE drilldown_visualization_id_seq OWNED BY drilldown_visualization.id;
+
+
+--
+-- TOC entry 172 (class 1259 OID 92570)
+-- Name: job; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE job (
+    id integer NOT NULL,
+    title character varying,
+    tags character varying,
+    start_time timestamp without time zone NOT NULL,
+    end_time timestamp without time zone,
+    user_id bigint NOT NULL,
+    app_id bigint NOT NULL,
+    status integer NOT NULL,
+    status_text character varying,
+    params character varying,
+    stack_size integer,
+    job_uuid uuid,
+    schedule_id integer
+);
+
+
+ALTER TABLE public.job OWNER TO appserver;
+
+--
+-- TOC entry 173 (class 1259 OID 92576)
+-- Name: job_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE job_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.job_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2498 (class 0 OID 0)
+-- Dependencies: 173
+-- Name: job_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE job_id_seq OWNED BY job.id;
+
+
+--
+-- TOC entry 178 (class 1259 OID 92594)
+-- Name: job_record; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE job_record (
+    id integer NOT NULL,
+    job_id bigint NOT NULL,
+    name character varying,
+    type integer NOT NULL,
+    status integer NOT NULL,
+    created timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public.job_record OWNER TO appserver;
+
+--
+-- TOC entry 179 (class 1259 OID 92600)
+-- Name: job_record_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE job_record_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.job_record_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2499 (class 0 OID 0)
+-- Dependencies: 179
+-- Name: job_record_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE job_record_id_seq OWNED BY job_record.id;
+
+
+--
+-- TOC entry 185 (class 1259 OID 92621)
+-- Name: library; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE library (
+    id integer NOT NULL,
+    user_id bigint,
+    name character varying
+);
+
+
+ALTER TABLE public.library OWNER TO appserver;
+
+--
+-- TOC entry 186 (class 1259 OID 92627)
+-- Name: library_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE library_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.library_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2500 (class 0 OID 0)
+-- Dependencies: 186
+-- Name: library_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE library_id_seq OWNED BY library.id;
+
+
+--
+-- TOC entry 187 (class 1259 OID 92629)
+-- Name: library_visualization_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE library_visualization_map (
+    library_id bigint,
+    visualization_id bigint,
+    list_order integer
+);
+
+
+ALTER TABLE public.library_visualization_map OWNER TO appserver;
+
+--
+-- TOC entry 188 (class 1259 OID 92632)
+-- Name: privilege; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE privilege (
+    id bigint NOT NULL,
+    name character varying
+);
+
+
+ALTER TABLE public.privilege OWNER TO appserver;
+
+--
+-- TOC entry 189 (class 1259 OID 92638)
+-- Name: privilege_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE privilege_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.privilege_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2501 (class 0 OID 0)
+-- Dependencies: 189
+-- Name: privilege_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE privilege_id_seq OWNED BY privilege.id;
+
+
+--
+-- TOC entry 170 (class 1259 OID 92562)
+-- Name: result; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE result (
+    id integer NOT NULL,
+    viz_id bigint,
+    data character varying,
+    job_id bigint,
+    tags character varying,
+    result_type integer,
+    metadata character varying,
+    catalog bigint,
+    asterlens_category character varying,
+    acl character varying,
+    title character varying,
+    time_stamp timestamp without time zone,
+    connection_profile bigint,
+    fts tsvector,
+    favorites character varying
+);
+
+
+ALTER TABLE public.result OWNER TO appserver;
+
+--
+-- TOC entry 171 (class 1259 OID 92568)
+-- Name: result_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE result_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.result_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2502 (class 0 OID 0)
+-- Dependencies: 171
+-- Name: result_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE result_id_seq OWNED BY result.id;
+
+
+--
+-- TOC entry 190 (class 1259 OID 92640)
+-- Name: role; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE role (
+    id bigint NOT NULL,
+    name character varying
+);
+
+
+ALTER TABLE public.role OWNER TO appserver;
+
+--
+-- TOC entry 191 (class 1259 OID 92646)
+-- Name: role_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE role_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.role_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2503 (class 0 OID 0)
+-- Dependencies: 191
+-- Name: role_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE role_id_seq OWNED BY role.id;
+
+
+--
+-- TOC entry 192 (class 1259 OID 92648)
+-- Name: role_privilege_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE role_privilege_map (
+    role_id bigint,
+    privilege_id bigint
+);
+
+
+ALTER TABLE public.role_privilege_map OWNER TO appserver;
+
+--
+-- TOC entry 210 (class 1259 OID 92746)
+-- Name: schedule; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule (
+    id integer NOT NULL,
+    status character varying,
+    app_id integer,
+    user_id bigint,
+    jobform character varying,
+    scheduleform character varying,
+    enabled boolean
+);
+
+
+ALTER TABLE public.schedule OWNER TO appserver;
+
+--
+-- TOC entry 208 (class 1259 OID 92733)
+-- Name: schedule_fired_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_fired_triggers (
+    sched_name character varying(120) NOT NULL,
+    entry_id character varying(95) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    instance_name character varying(200) NOT NULL,
+    fired_time bigint NOT NULL,
+    sched_time bigint NOT NULL,
+    priority integer NOT NULL,
+    state character varying(16) NOT NULL,
+    job_name character varying(200),
+    job_group character varying(200),
+    is_nonconcurrent boolean,
+    requests_recovery boolean
+);
+
+
+ALTER TABLE public.schedule_fired_triggers OWNER TO appserver;
+
+--
+-- TOC entry 211 (class 1259 OID 92754)
+-- Name: schedule_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE schedule_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.schedule_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2504 (class 0 OID 0)
+-- Dependencies: 211
+-- Name: schedule_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE schedule_id_seq OWNED BY schedule.id;
+
+
+--
+-- TOC entry 205 (class 1259 OID 92699)
+-- Name: schedule_job_details; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_job_details (
+    sched_name character varying(120) NOT NULL,
+    job_name character varying(200) NOT NULL,
+    job_group character varying(200) NOT NULL,
+    description character varying(250),
+    job_class_name character varying(250) NOT NULL,
+    is_durable boolean NOT NULL,
+    is_nonconcurrent boolean NOT NULL,
+    is_update_data boolean NOT NULL,
+    requests_recovery boolean NOT NULL,
+    job_data bytea
+);
+
+
+ALTER TABLE public.schedule_job_details OWNER TO appserver;
+
+--
+-- TOC entry 209 (class 1259 OID 92741)
+-- Name: schedule_paused_trigger_grps; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_paused_trigger_grps (
+    sched_name character varying(120) NOT NULL,
+    trigger_group character varying(200) NOT NULL
+);
+
+
+ALTER TABLE public.schedule_paused_trigger_grps OWNER TO appserver;
+
+--
+-- TOC entry 207 (class 1259 OID 92720)
+-- Name: schedule_simple_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_simple_triggers (
+    sched_name character varying(120) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    repeat_count bigint NOT NULL,
+    repeat_interval bigint NOT NULL,
+    times_triggered bigint NOT NULL
+);
+
+
+ALTER TABLE public.schedule_simple_triggers OWNER TO appserver;
+
+--
+-- TOC entry 206 (class 1259 OID 92707)
+-- Name: schedule_triggers; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE schedule_triggers (
+    sched_name character varying(120) NOT NULL,
+    trigger_name character varying(200) NOT NULL,
+    trigger_group character varying(200) NOT NULL,
+    job_name character varying(200) NOT NULL,
+    job_group character varying(200) NOT NULL,
+    description character varying(250),
+    next_fire_time bigint,
+    prev_fire_time bigint,
+    priority integer,
+    trigger_state character varying(16) NOT NULL,
+    trigger_type character varying(8) NOT NULL,
+    start_time bigint NOT NULL,
+    end_time bigint,
+    calendar_name character varying(200),
+    misfire_instr smallint,
+    job_data bytea
+);
+
+
+ALTER TABLE public.schedule_triggers OWNER TO appserver;
+
+--
+-- TOC entry 213 (class 1259 OID 92758)
+-- Name: search; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE search (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    text character varying,
+    created timestamp without time zone,
+    results bigint
+);
+
+
+ALTER TABLE public.search OWNER TO appserver;
+
+--
+-- TOC entry 214 (class 1259 OID 92764)
+-- Name: search_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE search_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.search_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2505 (class 0 OID 0)
+-- Dependencies: 214
+-- Name: search_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE search_id_seq OWNED BY search.id;
+
+
+--
+-- TOC entry 215 (class 1259 OID 92766)
+-- Name: search_result; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE search_result (
+    id bigint NOT NULL,
+    search_id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    rank double precision
+);
+
+
+ALTER TABLE public.search_result OWNER TO appserver;
+
+--
+-- TOC entry 216 (class 1259 OID 92769)
+-- Name: search_result_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE search_result_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.search_result_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2506 (class 0 OID 0)
+-- Dependencies: 216
+-- Name: search_result_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE search_result_id_seq OWNED BY search_result.id;
+
+
+--
+-- TOC entry 217 (class 1259 OID 92771)
+-- Name: table_filter; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE table_filter (
+    id integer NOT NULL,
+    user_id bigint NOT NULL,
+    table_name character varying NOT NULL,
+    title character varying,
+    acl character varying,
+    filters character varying
+);
+
+
+ALTER TABLE public.table_filter OWNER TO appserver;
+
+--
+-- TOC entry 218 (class 1259 OID 92777)
+-- Name: table_filter_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE table_filter_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.table_filter_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2507 (class 0 OID 0)
+-- Dependencies: 218
+-- Name: table_filter_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE table_filter_id_seq OWNED BY table_filter.id;
+
+
+--
+-- TOC entry 193 (class 1259 OID 92651)
+-- Name: user; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE "user" (
+    id integer NOT NULL,
+    username character varying,
+    enabled boolean,
+    last_login timestamp without time zone,
+    user_type integer,
+    shared_results character varying,
+    viewed_results character varying,
+    recently_viewed_results character varying,
+    recently_viewed_apps character varying,
+    my_apps_order character varying
+);
+
+
+ALTER TABLE public."user" OWNER TO appserver;
+
+--
+-- TOC entry 194 (class 1259 OID 92657)
+-- Name: user_app_acl; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_app_acl (
+    id integer NOT NULL,
+    user_id integer,
+    app_id integer,
+    acl character varying
+);
+
+
+ALTER TABLE public.user_app_acl OWNER TO appserver;
+
+--
+-- TOC entry 195 (class 1259 OID 92663)
+-- Name: user_app_acl_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_app_acl_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_app_acl_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2508 (class 0 OID 0)
+-- Dependencies: 195
+-- Name: user_app_acl_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_app_acl_id_seq OWNED BY user_app_acl.id;
+
+
+--
+-- TOC entry 196 (class 1259 OID 92665)
+-- Name: user_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2509 (class 0 OID 0)
+-- Dependencies: 196
+-- Name: user_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_id_seq OWNED BY "user".id;
+
+
+--
+-- TOC entry 197 (class 1259 OID 92667)
+-- Name: user_result_preference; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_result_preference (
+    id integer NOT NULL,
+    user_id integer,
+    result_id integer,
+    flag integer
+);
+
+
+ALTER TABLE public.user_result_preference OWNER TO appserver;
+
+--
+-- TOC entry 198 (class 1259 OID 92670)
+-- Name: user_result_preference_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE user_result_preference_id_seq
+    START WITH 10
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.user_result_preference_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2510 (class 0 OID 0)
+-- Dependencies: 198
+-- Name: user_result_preference_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE user_result_preference_id_seq OWNED BY user_result_preference.id;
+
+
+--
+-- TOC entry 199 (class 1259 OID 92672)
+-- Name: user_role_map; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE user_role_map (
+    role_id bigint,
+    user_id bigint
+);
+
+
+ALTER TABLE public.user_role_map OWNER TO appserver;
+
+--
+-- TOC entry 200 (class 1259 OID 92675)
+-- Name: visualization; Type: TABLE; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE TABLE visualization (
+    id integer NOT NULL,
+    result_id bigint,
+    aster_vis_table_name character varying,
+    aster_vis_id bigint
+);
+
+
+ALTER TABLE public.visualization OWNER TO appserver;
+
+--
+-- TOC entry 201 (class 1259 OID 92681)
+-- Name: visualization_id_seq; Type: SEQUENCE; Schema: public; Owner: appserver
+--
+
+CREATE SEQUENCE visualization_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.visualization_id_seq OWNER TO appserver;
+
+--
+-- TOC entry 2511 (class 0 OID 0)
+-- Dependencies: 201
+-- Name: visualization_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: appserver
+--
+
+ALTER SEQUENCE visualization_id_seq OWNED BY visualization.id;
+
+
+--
+-- TOC entry 2255 (class 2604 OID 92779)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY app ALTER COLUMN id SET DEFAULT nextval('app_id_seq'::regclass);
+
+
+--
+-- TOC entry 2256 (class 2604 OID 92780)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY collection ALTER COLUMN id SET DEFAULT nextval('collection_id_seq'::regclass);
+
+
+--
+-- TOC entry 2257 (class 2604 OID 92781)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY connection_profile ALTER COLUMN id SET DEFAULT nextval('connection_profile_id_seq'::regclass);
+
+
+--
+-- TOC entry 2258 (class 2604 OID 92782)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY library ALTER COLUMN id SET DEFAULT nextval('library_id_seq'::regclass);
+
+
+--
+-- TOC entry 2259 (class 2604 OID 92783)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY "user" ALTER COLUMN id SET DEFAULT nextval('user_id_seq'::regclass);
+
+
+--
+-- TOC entry 2260 (class 2604 OID 92784)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY user_app_acl ALTER COLUMN id SET DEFAULT nextval('user_app_acl_id_seq'::regclass);
+
+
+--
+-- TOC entry 2261 (class 2604 OID 92785)
+-- Name: id; Type: DEFAULT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY visualization ALTER COLUMN id SET DEFAULT nextval('visualization_id_seq'::regclass);
+
+
+--
+-- TOC entry 2433 (class 0 OID 92554)
+-- Dependencies: 168
+-- Data for Name: app; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY app (id, name, input_tables, output_tables, class_name, jar_name, version, fw_version, report_parameters, drilldown_parameters, small_icon_name, large_icon_name, description, dev_name, dev_id, profile_id, status, status_text, clone_name, dependencies, constants, viz_folders, publish, acl, queries, owner, app_type, app_stats, url) FROM stdin;
+10	Test App1	\N	\N	com.teradata.aster.MyApp1	app1.jar	1	\N	\N	\N	\N	\N	\N	Aster1	com.teradata.aster.Test1	\N	3	\N	Test App1	\N	\N	\N	\N	\N	\N	["admin"]	0	\N	\N
+11	Test App2	\N	\N	com.teradata.aster.MyApp2	app2.jar	1	\N	\N	\N	\N	\N	\N	Aster2	com.teradata.aster.Test2	\N	3	\N	Test App2	\N	\N	\N	\N	\N	\N	["admin"]	0	\N	\N
+12	Test App3	\N	\N	com.teradata.aster.MyApp3	app3.jar	1	\N	\N	\N	\N	\N	\N	Aster3	com.teradata.aster.Test3	\N	3	\N	Test App3	\N	\N	\N	\N	\N	\N	["beehive"]	0	\N	\N
+13	Test_withviz	\N	\N	com.teradata.appcenter.appmgmt.genericapp.GenericApp	Test_withviz_13.jar	1	1.0	\N	\N	\N	\N	ASTER	ASTER	ASTER	\N	3	\N	Test_withviz	[{"name":"cfilter","developerName":"Aster","success":false,"userDefined":false,"version":"5.0_rel_1.0_r38336","extension":null,"file":null}]	\N	\N	\N	["admin"]	["SELECT *\\nFROM CFILTER (\\n    ON (SELECT 1)\\n    PARTITION BY 1\\n    database('%dbname%')\\n    userid('%dbusername%')\\n    password('%dbpassword%')\\n    inputtable('cfilter_test')\\n    outputTable('cfilter_test2')\\n    inputColumns('item')\\n    joinColumns('tranid')\\n    otherColumns('storeid')\\n    droptable('true')\\n);","\\n\\ninsert into app_center_visualizations \\nselect id,json from Visualizer (ON \\"cfilter_test2\\" PARTITION BY 1 \\nasterfunction('cfilter') \\ntitle('Test_viz') \\nviztype('chord'));"]	["admin"]	0	{"installed":1446041230643,"upgraded":null,"runCount":null,"lastRun":null}	\N
+14	Test_nostack	\N	\N	com.teradata.appcenter.appmgmt.genericapp.GenericApp	Test_nostack_14.jar	1	1.0	\N	\N	\N	\N	ASTER	ASTER	ASTER	\N	3	\N	Test_nostack	[]	\N	\N	\N	["admin"]	["select * from cfilter_test;"]	["admin"]	0	{"installed":1446041240738,"upgraded":null,"runCount":null,"lastRun":null}	\N
+15	Test_dependency	\N	\N	com.teradata.appcenter.appmgmt.genericapp.GenericApp	Test_dependency_15.jar	1	1.0	\N	\N	\N	\N	ASTER	ASTER	ASTER	\N	3	\N	Test_dependency	[{"name":"tslotgen","developerName":"Karthik","success":false,"userDefined":true,"version":"PS_1.0","extension":null,"file":null}]	\N	\N	\N	["admin"]	["select * from cfilter_test;"]	["admin"]	0	{"installed":1446041251929,"upgraded":null,"runCount":null,"lastRun":null}	\N
+16	Test_noviz	[{"name":"cfilter_test","distributionKey":null,"description":null,"optional":null,"outputColumn":null,"idColumn":null,"columns":[{"name":"tranid","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"dt","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"storeid","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"region","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"item","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"sku","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"category","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null}],"actualName":null,"visTable":null}]	[{"name":"output_test","distributionKey":"tranid","description":null,"optional":null,"outputColumn":null,"idColumn":null,"columns":[{"name":"tranid","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"dt","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"storeid","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"region","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"item","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"sku","type":"integer","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null},{"name":"category","type":"varchar","description":null,"optional":null,"actualName":null,"label":null,"hideFromSelectors":null}],"actualName":null,"visTable":null}]	com.teradata.appcenter.appmgmt.genericapp.GenericApp	Test_noviz_16.jar	1	1.0	\N	\N	\N	\N	ASTER	ASTER	ASTER	\N	3	\N	Test_noviz	[]	\N	\N	\N	["admin"]	["insert into output_test SELECT * FROM cfilter_test;"]	["admin"]	0	{"installed":1446041259684,"upgraded":null,"runCount":null,"lastRun":null}	\N
+17	Test App	\N	\N	com.teradata.aster.MyApp	app.jar	1	\N	\N	\N	\N	\N	\N	Aster	com.teradata.aster.TestCollection	\N	3	\N	\N	\N	\N	\N	\N	\N	\N	\N	0	\N	\N
+21	Some name	\N	\N	com.sample.miniapp.MiniApp	miniapp.jar	1	\N	[{"type":"Number","name":"Number1","label":"Testing number","description":null,"optional":null,"tab":null,"min":1.0,"max":100.0,"format":null,"default":null,"requires_input_column":null,"disabled":null},{"type":"Text","name":"String1","label":"Testing string","description":null,"optional":null,"tab":null,"default":null,"requires_input_column":null,"disabled":null},{"type":"Date","name":"Date1","label":"Testing date","description":null,"optional":null,"tab":null,"format":null,"default":null,"requires_input_column":null,"disabled":null,"min":null,"max":"10-28-2015"},{"type":"Menu","name":"Select1","label":"Testing select","description":null,"optional":null,"tab":null,"selectOptions":[{"label":"opt1","value":"Option One","selected":null},{"label":"opt2","value":"Option Two","selected":null}],"min":0,"max":0,"multiple":null,"allowsInput":null,"default":null,"requires_input_column":null,"disabled":null,"test":null}]	\N	\N	\N	\N	\N	\N	\N	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+23	Some name	\N	\N	com.sample.miniapp.MiniApp	miniapp.jar	1	\N	[{"type":"Number","name":"Number1","label":"Testing number","description":null,"optional":null,"tab":null,"min":1.0,"max":100.0,"format":null,"default":null,"requires_input_column":null,"disabled":null},{"type":"Text","name":"String1","label":"Testing string","description":null,"optional":null,"tab":null,"default":null,"requires_input_column":null,"disabled":null},{"type":"Date","name":"Date1","label":"Testing date","description":null,"optional":null,"tab":null,"format":null,"default":null,"requires_input_column":null,"disabled":null,"min":null,"max":"10-28-2015"},{"type":"Menu","name":"Select1","label":"Testing select","description":null,"optional":null,"tab":null,"selectOptions":[{"label":"opt1","value":"Option One","selected":null},{"label":"opt2","value":"Option Two","selected":null}],"min":0,"max":0,"multiple":null,"allowsInput":null,"default":null,"requires_input_column":null,"disabled":null,"test":null}]	\N	\N	\N	\N	\N	\N	\N	0	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- TOC entry 2512 (class 0 OID 0)
+-- Dependencies: 169
+-- Name: app_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('app_id_seq', 23, true);
+
+
+--
+-- TOC entry 2439 (class 0 OID 92578)
+-- Dependencies: 174
+-- Data for Name: audit; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY audit (id, submit_timestamp, user_id, miniapp_id, event_type, additional_info, result_id, job_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2513 (class 0 OID 0)
+-- Dependencies: 175
+-- Name: audit_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('audit_id_seq', 1, false);
+
+
+--
+-- TOC entry 2467 (class 0 OID 92683)
+-- Dependencies: 202
+-- Data for Name: catalog; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY catalog (id, name, profile_id, acl, owner) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2514 (class 0 OID 0)
+-- Dependencies: 203
+-- Name: catalog_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('catalog_id_seq', 1, false);
+
+
+--
+-- TOC entry 2445 (class 0 OID 92602)
+-- Dependencies: 180
+-- Data for Name: collection; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY collection (id, name, user_id) FROM stdin;
+1	Test1	1
+\.
+
+
+--
+-- TOC entry 2446 (class 0 OID 92608)
+-- Dependencies: 181
+-- Data for Name: collection_app_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY collection_app_map (collection_id, app_id, list_order) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2515 (class 0 OID 0)
+-- Dependencies: 182
+-- Name: collection_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('collection_id_seq', 2, true);
+
+
+--
+-- TOC entry 2441 (class 0 OID 92586)
+-- Dependencies: 176
+-- Data for Name: configuration; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY configuration (id, key, value, name_space) FROM stdin;
+10	defaultTheme	Light	\N
+11	authMode	DB	
+13	asterDb	beehive	asterDB
+14	asterUserName	db_superuser	asterDB
+12	asterIp	10.80.167.30	asterDB
+15	asterPassword	be0d4de40ec3c9e9467addff3ec7d3ba030b7fc64a1a9cc986db7c108704ef5e	asterDB
+16	adminPwd	4cd19ccedc23e30e18b9157fba2d998a3bf314ce03fc33afdb389093a1b82b57	
+17	ldapServerURL	ldap://td.teradata.com:389/DC=TD,DC=TERADATA,DC=COM	ldap
+18	ldapAdminPwd	b0ff011a84e4bc4d0e8d685c31300f6db62b89713f34d6dafdf6b1c6eddcb3c7	ldap
+19	ldapAdminUserDn	aa230480@td.teradata.com	ldap
+23	aster.dev.test	db	namespace
+\.
+
+
+--
+-- TOC entry 2516 (class 0 OID 0)
+-- Dependencies: 177
+-- Name: configuration_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('configuration_id_seq', 23, true);
+
+
+--
+-- TOC entry 2448 (class 0 OID 92613)
+-- Dependencies: 183
+-- Data for Name: connection_profile; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY connection_profile (id, name, type, host, connection_params, owner, cp_stats) FROM stdin;
+1	Test2	Aster	10.80.144.120	{"userName":"db_superuser","poolLimit":"45","database":"beehive","password":"2a5037a558bbb4d1f0ddefaea623890e0929ad3c8d092dfb18cedf74499dfd44"}	admin	\N
+2	Test2	Aster	10.80.144.120	{"userName":"db_superuser","poolLimit":"45","database":"beehive","password":"2a5037a558bbb4d1f0ddefaea623890e0929ad3c8d092dfb18cedf74499dfd44"}	admin	\N
+3	Test2	Aster	10.80.144.120	{"userName":"db_superuser","poolLimit":"45","database":"beehive","password":"2a5037a558bbb4d1f0ddefaea623890e0929ad3c8d092dfb18cedf74499dfd44"}	admin	\N
+4	Test2	Aster	10.80.144.120	{"userName":"db_superuser","poolLimit":"45","database":"beehive","password":"2a5037a558bbb4d1f0ddefaea623890e0929ad3c8d092dfb18cedf74499dfd44"}	admin	\N
+\.
+
+
+--
+-- TOC entry 2517 (class 0 OID 0)
+-- Dependencies: 184
+-- Name: connection_profile_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('connection_profile_id_seq', 8, true);
+
+
+--
+-- TOC entry 2469 (class 0 OID 92693)
+-- Dependencies: 204
+-- Data for Name: drilldown_visualization; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY drilldown_visualization (id, create_time, visualization_id, generator_params, drilldown_params, title, subtitle, visualization, visualization_format) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2518 (class 0 OID 0)
+-- Dependencies: 212
+-- Name: drilldown_visualization_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('drilldown_visualization_id_seq', 1, false);
+
+
+--
+-- TOC entry 2437 (class 0 OID 92570)
+-- Dependencies: 172
+-- Data for Name: job; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY job (id, title, tags, start_time, end_time, user_id, app_id, status, status_text, params, stack_size, job_uuid, schedule_id) FROM stdin;
+1	Test12	Tags Test12	2015-10-28 07:06:53.986	\N	1	12	1	\N	\N	0	b6157e92-061f-4f79-a561-2caa7a1e83dc	\N
+2	Test11	Tags Test11	2015-10-28 07:06:54.06	\N	1	11	1	\N	\N	0	8a1ae2b9-4857-480e-9414-4e1792f3f734	\N
+3	Test10	Tags Test10	2015-10-28 07:06:54.067	\N	1	10	1	\N	\N	0	779186fa-236d-4cc6-9b12-82f21dced4fd	\N
+4	Test12	Tags Test12	2015-10-28 07:06:54.163	\N	1	12	1	\N	\N	0	d510496d-b46c-41a9-be37-50702b34aabe	\N
+5	Test11	Tags Test11	2015-10-28 07:06:54.174	\N	1	11	1	\N	\N	0	8caaee56-4da6-4815-bb40-253102140ce6	\N
+6	Test10	Tags Test10	2015-10-28 07:06:54.18	\N	1	10	1	\N	\N	0	bc4b186c-fa77-4048-8de7-63b65e4f0ba8	\N
+7	Test12	Tags Test12	2015-10-28 07:06:54.338	\N	1	12	1	\N	\N	0	d22bfa8b-9e22-4579-89e7-40b489381b59	\N
+8	Test11	Tags Test11	2015-10-28 07:06:54.354	\N	1	11	1	\N	\N	0	4a9c3654-bcf1-401b-bd57-48c70ba6adbd	\N
+9	Test10	Tags Test10	2015-10-28 07:06:54.36	\N	1	10	1	\N	\N	0	b1ec3098-a82e-45ba-9b80-57669d95dcfc	\N
+10	Test12	Tags Test12	2015-10-28 07:06:54.435	\N	1	12	1	\N	\N	0	f8d192cf-771f-42df-9cf8-bf73192b795a	\N
+11	Test11	Tags Test11	2015-10-28 07:06:54.448	\N	1	11	1	\N	\N	0	f43d2269-defc-4a65-80eb-be6d0360a3a3	\N
+12	Test10	Tags Test10	2015-10-28 07:06:54.454	\N	1	10	1	\N	\N	0	7846a7cc-0fe4-4b77-971d-8a7e455a644e	\N
+13	Test12	Tags Test12	2015-10-28 07:06:54.533	\N	1	12	1	\N	\N	0	dad231dd-4ab3-49f8-8966-58ea4d1fa38e	\N
+14	Test11	Tags Test11	2015-10-28 07:06:54.547	\N	1	11	1	\N	\N	0	3ee8be2c-7ddc-4c6d-9245-d2303d43d123	\N
+15	Test10	Tags Test10	2015-10-28 07:06:54.553	\N	1	10	1	\N	\N	0	d1174399-125d-4346-acfc-f20594bcd5b0	\N
+16	\N	\N	2015-10-28 07:08:07.674	\N	0	1	0	\N	123123	\N	\N	\N
+17	\N	\N	2015-10-28 07:08:07.677	\N	0	1	0	\N	123123	\N	\N	\N
+\.
+
+
+--
+-- TOC entry 2519 (class 0 OID 0)
+-- Dependencies: 173
+-- Name: job_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('job_id_seq', 17, true);
+
+
+--
+-- TOC entry 2443 (class 0 OID 92594)
+-- Dependencies: 178
+-- Data for Name: job_record; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY job_record (id, job_id, name, type, status, created) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2520 (class 0 OID 0)
+-- Dependencies: 179
+-- Name: job_record_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('job_record_id_seq', 1, false);
+
+
+--
+-- TOC entry 2450 (class 0 OID 92621)
+-- Dependencies: 185
+-- Data for Name: library; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY library (id, user_id, name) FROM stdin;
+1	1	Test1
+\.
+
+
+--
+-- TOC entry 2521 (class 0 OID 0)
+-- Dependencies: 186
+-- Name: library_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('library_id_seq', 1, true);
+
+
+--
+-- TOC entry 2452 (class 0 OID 92629)
+-- Dependencies: 187
+-- Data for Name: library_visualization_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY library_visualization_map (library_id, visualization_id, list_order) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2453 (class 0 OID 92632)
+-- Dependencies: 188
+-- Data for Name: privilege; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY privilege (id, name) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2522 (class 0 OID 0)
+-- Dependencies: 189
+-- Name: privilege_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('privilege_id_seq', 1, false);
+
+
+--
+-- TOC entry 2435 (class 0 OID 92562)
+-- Dependencies: 170
+-- Data for Name: result; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY result (id, viz_id, data, job_id, tags, result_type, metadata, catalog, asterlens_category, acl, title, time_stamp, connection_profile, fts, favorites) FROM stdin;
+1	\N		1	\N	1	\N	\N	\N	["admin"]	Test	2015-10-28 07:06:54.015	\N	\N	["admin"]
+2	\N		4	\N	1	\N	\N	\N	["admin"]	Test	2015-10-28 07:06:54.168	\N	\N	\N
+3	\N		7	\N	1	\N	\N	\N	["admin"]	Test	2015-10-28 07:06:54.345	\N	\N	\N
+4	\N		10	\N	1	\N	\N	\N	["admin"]	Test	2015-10-28 07:06:54.44	\N	\N	\N
+5	\N		13	\N	1	\N	\N	\N	["admin"]	Test	2015-10-28 07:06:54.538	\N	\N	\N
+\.
+
+
+--
+-- TOC entry 2523 (class 0 OID 0)
+-- Dependencies: 171
+-- Name: result_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('result_id_seq', 5, true);
+
+
+--
+-- TOC entry 2455 (class 0 OID 92640)
+-- Dependencies: 190
+-- Data for Name: role; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY role (id, name) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2524 (class 0 OID 0)
+-- Dependencies: 191
+-- Name: role_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('role_id_seq', 10, false);
+
+
+--
+-- TOC entry 2457 (class 0 OID 92648)
+-- Dependencies: 192
+-- Data for Name: role_privilege_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY role_privilege_map (role_id, privilege_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2475 (class 0 OID 92746)
+-- Dependencies: 210
+-- Data for Name: schedule; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule (id, status, app_id, user_id, jobform, scheduleform, enabled) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2473 (class 0 OID 92733)
+-- Dependencies: 208
+-- Data for Name: schedule_fired_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_fired_triggers (sched_name, entry_id, trigger_name, trigger_group, instance_name, fired_time, sched_time, priority, state, job_name, job_group, is_nonconcurrent, requests_recovery) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2525 (class 0 OID 0)
+-- Dependencies: 211
+-- Name: schedule_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('schedule_id_seq', 1, false);
+
+
+--
+-- TOC entry 2470 (class 0 OID 92699)
+-- Dependencies: 205
+-- Data for Name: schedule_job_details; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_job_details (sched_name, job_name, job_group, description, job_class_name, is_durable, is_nonconcurrent, is_update_data, requests_recovery, job_data) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2474 (class 0 OID 92741)
+-- Dependencies: 209
+-- Data for Name: schedule_paused_trigger_grps; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_paused_trigger_grps (sched_name, trigger_group) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2472 (class 0 OID 92720)
+-- Dependencies: 207
+-- Data for Name: schedule_simple_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_simple_triggers (sched_name, trigger_name, trigger_group, repeat_count, repeat_interval, times_triggered) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2471 (class 0 OID 92707)
+-- Dependencies: 206
+-- Data for Name: schedule_triggers; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY schedule_triggers (sched_name, trigger_name, trigger_group, job_name, job_group, description, next_fire_time, prev_fire_time, priority, trigger_state, trigger_type, start_time, end_time, calendar_name, misfire_instr, job_data) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2478 (class 0 OID 92758)
+-- Dependencies: 213
+-- Data for Name: search; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY search (id, user_id, text, created, results) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2526 (class 0 OID 0)
+-- Dependencies: 214
+-- Name: search_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('search_id_seq', 1, false);
+
+
+--
+-- TOC entry 2480 (class 0 OID 92766)
+-- Dependencies: 215
+-- Data for Name: search_result; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY search_result (id, search_id, result_id, rank) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2527 (class 0 OID 0)
+-- Dependencies: 216
+-- Name: search_result_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('search_result_id_seq', 1, false);
+
+
+--
+-- TOC entry 2482 (class 0 OID 92771)
+-- Dependencies: 217
+-- Data for Name: table_filter; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY table_filter (id, user_id, table_name, title, acl, filters) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2528 (class 0 OID 0)
+-- Dependencies: 218
+-- Name: table_filter_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('table_filter_id_seq', 1, false);
+
+
+--
+-- TOC entry 2458 (class 0 OID 92651)
+-- Dependencies: 193
+-- Data for Name: user; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY "user" (id, username, enabled, last_login, user_type, shared_results, viewed_results, recently_viewed_results, recently_viewed_apps, my_apps_order) FROM stdin;
+1	admin	t	\N	\N	\N	\N	\N	\N	\N
+10	beehive	t	2015-10-28 07:06:54.368	2	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- TOC entry 2459 (class 0 OID 92657)
+-- Dependencies: 194
+-- Data for Name: user_app_acl; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_app_acl (id, user_id, app_id, acl) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2529 (class 0 OID 0)
+-- Dependencies: 195
+-- Name: user_app_acl_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_app_acl_id_seq', 10, false);
+
+
+--
+-- TOC entry 2530 (class 0 OID 0)
+-- Dependencies: 196
+-- Name: user_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_id_seq', 10, true);
+
+
+--
+-- TOC entry 2462 (class 0 OID 92667)
+-- Dependencies: 197
+-- Data for Name: user_result_preference; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_result_preference (id, user_id, result_id, flag) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2531 (class 0 OID 0)
+-- Dependencies: 198
+-- Name: user_result_preference_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('user_result_preference_id_seq', 10, false);
+
+
+--
+-- TOC entry 2464 (class 0 OID 92672)
+-- Dependencies: 199
+-- Data for Name: user_role_map; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY user_role_map (role_id, user_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2465 (class 0 OID 92675)
+-- Dependencies: 200
+-- Data for Name: visualization; Type: TABLE DATA; Schema: public; Owner: appserver
+--
+
+COPY visualization (id, result_id, aster_vis_table_name, aster_vis_id) FROM stdin;
+\.
+
+
+--
+-- TOC entry 2532 (class 0 OID 0)
+-- Dependencies: 201
+-- Name: visualization_id_seq; Type: SEQUENCE SET; Schema: public; Owner: appserver
+--
+
+SELECT pg_catalog.setval('visualization_id_seq', 1, false);
+
+
+--
+-- TOC entry 2263 (class 2606 OID 92787)
+-- Name: app_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY app
+    ADD CONSTRAINT app_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2270 (class 2606 OID 92807)
+-- Name: audit_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY audit
+    ADD CONSTRAINT audit_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2290 (class 2606 OID 92692)
+-- Name: catalog_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY catalog
+    ADD CONSTRAINT catalog_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2274 (class 2606 OID 92789)
+-- Name: collection_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY collection
+    ADD CONSTRAINT collection_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2272 (class 2606 OID 92809)
+-- Name: configuration_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY configuration
+    ADD CONSTRAINT configuration_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2276 (class 2606 OID 92791)
+-- Name: connection_profile_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY connection_profile
+    ADD CONSTRAINT connection_profile_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2292 (class 2606 OID 92813)
+-- Name: drilldown_visualization_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY drilldown_visualization
+    ADD CONSTRAINT drilldown_visualization_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2268 (class 2606 OID 92805)
+-- Name: job_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY job
+    ADD CONSTRAINT job_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2278 (class 2606 OID 92793)
+-- Name: library_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY library
+    ADD CONSTRAINT library_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2280 (class 2606 OID 92795)
+-- Name: privilege_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY privilege
+    ADD CONSTRAINT privilege_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2266 (class 2606 OID 92811)
+-- Name: result_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY result
+    ADD CONSTRAINT result_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2282 (class 2606 OID 92797)
+-- Name: role_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY role
+    ADD CONSTRAINT role_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2320 (class 2606 OID 92740)
+-- Name: schedule_fired_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_fired_triggers
+    ADD CONSTRAINT schedule_fired_triggers_pkey PRIMARY KEY (sched_name, entry_id);
+
+
+--
+-- TOC entry 2296 (class 2606 OID 92706)
+-- Name: schedule_job_details_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_job_details
+    ADD CONSTRAINT schedule_job_details_pkey PRIMARY KEY (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2322 (class 2606 OID 92745)
+-- Name: schedule_paused_trigger_grps_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_paused_trigger_grps
+    ADD CONSTRAINT schedule_paused_trigger_grps_pkey PRIMARY KEY (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2324 (class 2606 OID 92753)
+-- Name: schedule_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule
+    ADD CONSTRAINT schedule_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2312 (class 2606 OID 92727)
+-- Name: schedule_simple_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_simple_triggers
+    ADD CONSTRAINT schedule_simple_triggers_pkey PRIMARY KEY (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2310 (class 2606 OID 92714)
+-- Name: schedule_triggers_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY schedule_triggers
+    ADD CONSTRAINT schedule_triggers_pkey PRIMARY KEY (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2286 (class 2606 OID 92801)
+-- Name: user_app_acl_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY user_app_acl
+    ADD CONSTRAINT user_app_acl_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2284 (class 2606 OID 92799)
+-- Name: user_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY "user"
+    ADD CONSTRAINT user_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2288 (class 2606 OID 92803)
+-- Name: visualization_pkey; Type: CONSTRAINT; Schema: public; Owner: appserver; Tablespace: 
+--
+
+ALTER TABLE ONLY visualization
+    ADD CONSTRAINT visualization_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 2264 (class 1259 OID 92814)
+-- Name: fulltext_idx; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX fulltext_idx ON result USING gin (fts);
+
+
+--
+-- TOC entry 2313 (class 1259 OID 92830)
+-- Name: idx_schedule_ft_inst_job_req_rcvry; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_inst_job_req_rcvry ON schedule_fired_triggers USING btree (sched_name, instance_name, requests_recovery);
+
+
+--
+-- TOC entry 2314 (class 1259 OID 92831)
+-- Name: idx_schedule_ft_j_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_j_g ON schedule_fired_triggers USING btree (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2315 (class 1259 OID 92832)
+-- Name: idx_schedule_ft_jg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_jg ON schedule_fired_triggers USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2316 (class 1259 OID 92833)
+-- Name: idx_schedule_ft_t_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_t_g ON schedule_fired_triggers USING btree (sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2317 (class 1259 OID 92834)
+-- Name: idx_schedule_ft_tg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_tg ON schedule_fired_triggers USING btree (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2318 (class 1259 OID 92829)
+-- Name: idx_schedule_ft_trig_inst_name; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_ft_trig_inst_name ON schedule_fired_triggers USING btree (sched_name, instance_name);
+
+
+--
+-- TOC entry 2293 (class 1259 OID 92816)
+-- Name: idx_schedule_j_grp; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_j_grp ON schedule_job_details USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2294 (class 1259 OID 92815)
+-- Name: idx_schedule_j_req_recovery; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_j_req_recovery ON schedule_job_details USING btree (sched_name, requests_recovery);
+
+
+--
+-- TOC entry 2297 (class 1259 OID 92819)
+-- Name: idx_schedule_t_c; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_c ON schedule_triggers USING btree (sched_name, calendar_name);
+
+
+--
+-- TOC entry 2298 (class 1259 OID 92820)
+-- Name: idx_schedule_t_g; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_g ON schedule_triggers USING btree (sched_name, trigger_group);
+
+
+--
+-- TOC entry 2299 (class 1259 OID 92817)
+-- Name: idx_schedule_t_j; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_j ON schedule_triggers USING btree (sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2300 (class 1259 OID 92818)
+-- Name: idx_schedule_t_jg; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_jg ON schedule_triggers USING btree (sched_name, job_group);
+
+
+--
+-- TOC entry 2301 (class 1259 OID 92823)
+-- Name: idx_schedule_t_n_g_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_n_g_state ON schedule_triggers USING btree (sched_name, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2302 (class 1259 OID 92822)
+-- Name: idx_schedule_t_n_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_n_state ON schedule_triggers USING btree (sched_name, trigger_name, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2303 (class 1259 OID 92824)
+-- Name: idx_schedule_t_next_fire_time; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_next_fire_time ON schedule_triggers USING btree (sched_name, next_fire_time);
+
+
+--
+-- TOC entry 2304 (class 1259 OID 92826)
+-- Name: idx_schedule_t_nft_misfire; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_misfire ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time);
+
+
+--
+-- TOC entry 2305 (class 1259 OID 92825)
+-- Name: idx_schedule_t_nft_st; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st ON schedule_triggers USING btree (sched_name, trigger_state, next_fire_time);
+
+
+--
+-- TOC entry 2306 (class 1259 OID 92827)
+-- Name: idx_schedule_t_nft_st_misfire; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st_misfire ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time, trigger_state);
+
+
+--
+-- TOC entry 2307 (class 1259 OID 92828)
+-- Name: idx_schedule_t_nft_st_misfire_grp; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_nft_st_misfire_grp ON schedule_triggers USING btree (sched_name, misfire_instr, next_fire_time, trigger_group, trigger_state);
+
+
+--
+-- TOC entry 2308 (class 1259 OID 92821)
+-- Name: idx_schedule_t_state; Type: INDEX; Schema: public; Owner: appserver; Tablespace: 
+--
+
+CREATE INDEX idx_schedule_t_state ON schedule_triggers USING btree (sched_name, trigger_state);
+
+
+--
+-- TOC entry 2326 (class 2606 OID 92728)
+-- Name: schedule_simple_triggers_sched_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY schedule_simple_triggers
+    ADD CONSTRAINT schedule_simple_triggers_sched_name_fkey FOREIGN KEY (sched_name, trigger_name, trigger_group) REFERENCES schedule_triggers(sched_name, trigger_name, trigger_group);
+
+
+--
+-- TOC entry 2325 (class 2606 OID 92715)
+-- Name: schedule_triggers_sched_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: appserver
+--
+
+ALTER TABLE ONLY schedule_triggers
+    ADD CONSTRAINT schedule_triggers_sched_name_fkey FOREIGN KEY (sched_name, job_name, job_group) REFERENCES schedule_job_details(sched_name, job_name, job_group);
+
+
+--
+-- TOC entry 2490 (class 0 OID 0)
+-- Dependencies: 5
+-- Name: public; Type: ACL; Schema: -; Owner: postgres
+--
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM postgres;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+
+
+-- Completed on 2015-11-16 16:31:34 PST
+
+--
+-- PostgreSQL database dump complete
+--
+
+\connect postgres
+
+SET default_transaction_read_only = off;
+
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 9.2.10
+-- Dumped by pg_dump version 9.2.10
+-- Started on 2015-11-16 16:31:34 PST
+
+SET statement_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET client_min_messages = warning;
+
+--
+-- TOC entry 2182 (class 1262 OID 12270)
+-- Dependencies: 2181
+-- Name: postgres; Type: COMMENT; Schema: -; Owner: postgres
+--
+
+COMMENT ON DATABASE postgres IS 'default administrative connection database';
+
+
+--
+-- TOC entry 169 (class 3079 OID 11995)
+-- Name: plpgsql; Type: EXTENSION; Schema: -; Owner: 
+--
+
+CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
+
+
+--
+-- TOC entry 2185 (class 0 OID 0)
+-- Dependencies: 169
+-- Name: EXTENSION plpgsql; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
+
+
+--
+-- TOC entry 168 (class 3079 OID 16384)
+-- Name: adminpack; Type: EXTENSION; Schema: -; Owner: 
+--
+
+CREATE EXTENSION IF NOT EXISTS adminpack WITH SCHEMA pg_catalog;
+
+
+--
+-- TOC entry 2186 (class 0 OID 0)
+-- Dependencies: 168
+-- Name: EXTENSION adminpack; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION adminpack IS 'administrative functions for PostgreSQL';
+
+
+--
+-- TOC entry 2184 (class 0 OID 0)
+-- Dependencies: 5
+-- Name: public; Type: ACL; Schema: -; Owner: postgres
+--
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM postgres;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+
+
+-- Completed on 2015-11-16 16:31:35 PST
+
+--
+-- PostgreSQL database dump complete
+--
+
+\connect template1
+
+SET default_transaction_read_only = off;
+
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 9.2.10
+-- Dumped by pg_dump version 9.2.10
+-- Started on 2015-11-16 16:31:35 PST
+
+SET statement_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SET check_function_bodies = false;
+SET client_min_messages = warning;
+
+--
+-- TOC entry 2181 (class 1262 OID 1)
+-- Dependencies: 2180
+-- Name: template1; Type: COMMENT; Schema: -; Owner: postgres
+--
+
+COMMENT ON DATABASE template1 IS 'default template for new databases';
+
+
+--
+-- TOC entry 168 (class 3079 OID 11995)
+-- Name: plpgsql; Type: EXTENSION; Schema: -; Owner: 
+--
+
+CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;
+
+
+--
+-- TOC entry 2184 (class 0 OID 0)
+-- Dependencies: 168
+-- Name: EXTENSION plpgsql; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';
+
+
+--
+-- TOC entry 2183 (class 0 OID 0)
+-- Dependencies: 5
+-- Name: public; Type: ACL; Schema: -; Owner: postgres
+--
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM postgres;
+GRANT ALL ON SCHEMA public TO postgres;
+GRANT ALL ON SCHEMA public TO PUBLIC;
+
+
+-- Completed on 2015-11-16 16:31:35 PST
+
+--
+-- PostgreSQL database dump complete
+--
+
+-- Completed on 2015-11-16 16:31:35 PST
+
+--
+-- PostgreSQL database cluster dump complete
+--
+
