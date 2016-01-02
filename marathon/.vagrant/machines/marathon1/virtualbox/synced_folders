@@ -1,1 +1,1 @@
-{"virtualbox":{"/vagrant":{"guestpath":"/vagrant","hostpath":"/home/pg186025/mesos/marathon","disabled":false}}}
+{"virtualbox":{"/vagrant":{"guestpath":"/vagrant","hostpath":"/home/puneet/data/mesos-vagrant-setup/marathon","disabled":false}}}
