@@ -1,0 +1,49 @@
+---
+- hosts: chronos 
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: add key 
+        apt_key: keyserver=hkp://keyserver.ubuntu.com:80 id=E56151BF 
+      - name: get destro 
+        command: lsb_release -is 
+        register: DISTRO 
+      - name: get destro 
+        command: lsb_release -cs 
+        register: CODENAME 
+      - debug: var=CODENAME
+      - name: add repo
+        apt_repository: repo="deb http://repos.mesosphere.com/{{ DISTRO.stdout | lower }} {{ CODENAME.stdout }} main" state=present
+      - name: update hosts file
+        template: src=./hosts.j2 dest=/etc/hosts
+#      - name: add java8 repo
+#        apt_repository: repo="ppa:webupd8team/java" state=present
+#      - name: accept license
+#        debconf: name='oracle-java8-installer' question='shared/accepted-oracle-license-v1-1' value='true' vtype='select'
+#      - name: install java8
+#        apt: name=oracle-java8-installer  state=latest force=yes update_cache=yes
+#      - name: install java8 set default
+#        apt: name=oracle-java8-set-default  state=latest force=yes update_cache=yes
+      - name: Create conf directory
+        file: path=/etc/chronos/conf state=directory recurse=yes
+      - name: update master location 
+        template: src=./master.j2 dest=/etc/chronos/conf/master
+      - name: update zk path file
+        template: src=./zk_path.j2 dest=/etc/chronos/conf/zk_path
+      - name: update zk hosts file
+        template: src=./zk_hosts.j2 dest=/etc/chronos/conf/zk_hosts
+      - name: install mesos for libraries 
+        apt: name=mesos state=latest force=yes update_cache=yes 
+      - name: delete mesos conf file
+        file: path=/etc/mesos/zk state=absent
+      - name: disable mesos master service
+        service: name=mesos-master state=stopped enabled=no
+      - name: disable mesos slave service
+        service: name=mesos-slave state=stopped enabled=no
+      - name: install chronos 
+        apt: name=chronos state=latest force=yes update_cache=yes 
+      - name: start chronos
+        service: name=chronos state=started
+      - name: stop zookeeper
+        service: name=zookeeper state=stopped enabled=no

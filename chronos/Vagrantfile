@@ -1,0 +1,20 @@
+ANSIBLE_GROUPS = {
+  "chronos" => ["chronos1"],
+  "all_groups:children" => ["chronos"]
+}
+
+
+Vagrant.configure(2) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    config.vm.provider "virtualbox" do |v|
+        v.memory = 1024 
+    end
+    config.vm.define "chronos1" do |chronos1|
+        chronos1.vm.network "private_network", ip: "192.168.33.18"
+        chronos1.vm.hostname = "chronos1"
+        chronos1.vm.provision "ansible" do |ansible|
+            ansible.playbook = "playbook.yml"
+            ansible.groups = ANSIBLE_GROUPS
+        end
+    end
+end
