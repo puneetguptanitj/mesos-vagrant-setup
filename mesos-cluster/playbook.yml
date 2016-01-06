@@ -17,6 +17,16 @@
         apt_repository: repo="deb http://repos.mesosphere.com/{{ DISTRO.stdout | lower }} {{ CODENAME.stdout }} main" state=present
       - name: install mesos 
         apt: name=mesos state=latest force=yes update_cache=yes 
+      - name: Add specific key
+        apt_key: id=36A1D7869245C8950F966E92D8576A8BA88D21E9 keyserver=hkp://keyserver.ubuntu.com:80 state=present
+      - name: Install https apt transport package
+        apt: pkg=apt-transport-https state=present update_cache=yes
+      - name: Add docker repo
+        apt_repository: repo='deb https://get.docker.io/ubuntu docker main' state=present
+      - name: Install lxc-docker package
+        apt: pkg=lxc-docker state=present update_cache=yes
+      - name: configure containerizers
+        lineinfile: dest=/etc/mesos-slave/containerizers create=yes line="docker,mesos"
       - name: stop zookeeper
         service: name=zookeeper state=stopped enabled=no
       - name: update hosts file
