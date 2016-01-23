@@ -1,0 +1,35 @@
+---
+- hosts: elk 
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: get destro 
+        command: lsb_release -is 
+        register: DISTRO 
+      - name: get destro 
+        command: lsb_release -cs 
+        register: CODENAME 
+      - name: get uname s 
+        command: uname -s 
+        register: UNAMES 
+      - name: get uname m 
+        command: uname -m 
+        register: UNAMEM 
+      - debug: var=CODENAME
+      - name: add repo
+        apt_repository: repo="deb https://apt.dockerproject.org/repo {{ DISTRO.stdout | lower }}-{{ CODENAME.stdout }} main" state=present
+      - name: Install docker package
+        apt: pkg=docker-engine state=present force=yes update_cache=yes
+      - name: update docker default 
+        template: src=./docker.j2 dest=/etc/default/docker
+      - name: update hosts file
+        template: src=./hosts.j2 dest=/etc/hosts
+      - name: restart docker 
+        service: name=docker state=restarted
+      - name: Install git
+        apt: pkg=git state=present force=yes update_cache=yes
+      - name: Clone elk compose repo 
+        git: repo=https://github.com/deviantony/docker-elk.git dest=/home/vagrant/elk clone=yes
+      - name: install docker compose 
+        get_url: url=https://github.com/docker/compose/releases/download/1.5.2/docker-compose-{{ UNAMES.stdout  }}-{{ UNAMEM.stdout }} dest=/usr/local/bin/docker-compose mode=0777 force=yes
