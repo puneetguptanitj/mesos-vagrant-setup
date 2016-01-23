@@ -1,0 +1,91 @@
+---
+- hosts: mnodes
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  vars:
+    znode_id: "{{ inventory_hostname | regex_replace ('mnode', '') }}"
+  tasks:
+      - name: add key 
+        apt_key: keyserver=hkp://keyserver.ubuntu.com:80 id=E56151BF 
+      - name: get destro 
+        command: lsb_release -is 
+        register: DISTRO 
+      - name: get destro 
+        command: lsb_release -cs 
+        register: CODENAME 
+      - debug: var=CODENAME
+      - name: add repo
+        apt_repository: repo="deb http://repos.mesosphere.com/{{ DISTRO.stdout | lower }} {{ CODENAME.stdout }} main" state=present
+      - name: install mesos 
+        apt: name=mesos state=latest force=yes update_cache=yes 
+      - name: add repo
+        apt_repository: repo="deb https://apt.dockerproject.org/repo {{ DISTRO.stdout | lower }}-{{ CODENAME.stdout }} main" state=present
+      - name: Install docker package
+        apt: pkg=docker-engine state=present force=yes update_cache=yes
+      - name: configure containerizers
+        lineinfile: dest=/etc/mesos-slave/containerizers create=yes line="docker,mesos"
+      - name: update
+        template: src=./zoo.cfg.j2 dest=/etc/zookeeper/conf/zoo.cfg
+      - name: id file
+        template: src=./myid.j2 dest=/etc/zookeeper/conf/myid
+      - name: update docker default 
+        template: src=./docker.j2 dest=/etc/default/docker
+      - name: update hosts file
+        template: src=./hosts.j2 dest=/etc/hosts
+      - name: zk file 
+        template: src=./zk_mesos.j2 dest=/etc/mesos/zk
+      - name: quorum file
+        template: src=./quorum.j2 dest=/etc/mesos-master/quorum
+      - name: start zookeeper
+        service: name=zookeeper state=started enabled=no
+      - name: start master
+        service: name=mesos-master state=started enabled=no
+      - name: start slave 
+        service: name=mesos-slave state=started enabled=no
+      - name: restart docker 
+        service: name=docker state=restarted
+#install marathon
+- hosts: marathon 
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: add java8 repo
+        apt_repository: repo="ppa:webupd8team/java" state=present
+      - name: accept license
+        debconf: name='oracle-java8-installer' question='shared/accepted-oracle-license-v1-1' value='true' vtype='select'
+      - name: install java8
+        apt: name=oracle-java8-installer  state=latest force=yes update_cache=yes
+      - name: install java8 set default
+        apt: name=oracle-java8-set-default  state=latest force=yes update_cache=yes
+      - name: Create conf directory
+        file: path=/etc/marathon/conf state=directory recurse=yes
+      - name: update master location
+        template: src=./master.j2 dest=/etc/marathon/conf/master
+      - name: update zk file
+        template: src=./zk_marathon.j2 dest=/etc/marathon/conf/zk
+      - name: install marathon
+        apt: name=marathon state=latest force=yes update_cache=yes
+      - name: start marathon 
+        service: name=marathon state=started enabled=yes
+#install chronos
+- hosts: chronos 
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: Create conf directory
+        file: path=/etc/chronos/conf state=directory recurse=yes
+      - name: update master location
+        template: src=./master.j2 dest=/etc/chronos/conf/master
+      - name: update zk path file
+        template: src=./zk_path.j2 dest=/etc/chronos/conf/zk_path
+      - name: update zk hosts file
+        template: src=./zk_hosts.j2 dest=/etc/chronos/conf/zk_hosts
+      - name: delete mesos conf file
+        file: path=/etc/mesos/zk state=absent
+      - name: install chronos
+        apt: name=chronos state=latest force=yes update_cache=yes
+      - name: start chronos
+        service: name=chronos state=started enabled=yes

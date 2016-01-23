@@ -1,0 +1,32 @@
+ANSIBLE_GROUPS = {
+  "mnodes" => ["mnode2", "mnode3", "mnode1"],
+  "marathon" => [ "mnode1"],
+  "chronos" => [ "mnode1"],
+  "all_groups:children" => ["mnodes", "marathon", "chronos"]
+}
+
+
+Vagrant.configure(2) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    config.vm.provider "virtualbox" do |v|
+        v.memory = 1024 
+    end
+    N = 3
+    (1..N).each do |machine_id|
+       config.vm.define "mnode#{machine_id}" do |machine|
+       machine.vm.hostname = "mnode#{machine_id}"
+       machine.vm.network "private_network", ip: "192.168.33.#{9+machine_id}"
+
+       # Only execute once the Ansible provisioner,
+       # when all the machines are up and ready.
+       if machine_id == N
+         machine.vm.provision :ansible do |ansible|
+         # Disable default limit to connect to all the machines
+         ansible.groups = ANSIBLE_GROUPS 
+         ansible.limit = "all_groups" 
+         ansible.playbook = "playbook.yml"
+        end
+     end
+  end
+end
+end
