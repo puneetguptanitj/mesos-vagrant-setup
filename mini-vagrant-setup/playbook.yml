@@ -37,12 +37,12 @@
         template: src=./zk_mesos.j2 dest=/etc/mesos/zk
       - name: quorum file
         template: src=./quorum.j2 dest=/etc/mesos-master/quorum
-      - name: start zookeeper
-        service: name=zookeeper state=started enabled=no
+      - name: stop zookeeper
+        service: name=zookeeper state=stopped enabled=no
       - name: start master
-        service: name=mesos-master state=started enabled=no
+        service: name=mesos-master state=started enabled=yes
       - name: start slave 
-        service: name=mesos-slave state=started enabled=no
+        service: name=mesos-slave state=started enabled=yes
       - name: restart docker 
         service: name=docker state=restarted
 #install marathon
@@ -69,6 +69,14 @@
         apt: name=marathon state=latest force=yes update_cache=yes
       - name: start marathon 
         service: name=marathon state=started enabled=yes
+#start zookeeper
+- hosts: zookeeper 
+  remote_user: vagrant
+  become: yes
+  become_method: sudo
+  tasks:
+      - name: start zookeeper
+        service: name=zookeeper state=started enabled=yes
 #install chronos
 - hosts: chronos 
   remote_user: vagrant
